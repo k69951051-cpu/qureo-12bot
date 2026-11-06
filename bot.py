@@ -37,7 +37,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 users = {}
-qr_flow = {}  # لتخزين خطوات إدخال بيانات المنصة مؤقتاً لكل طالب
+qr_flow = {}
 
 def esc(s):
     return html.escape(str(s))
@@ -59,7 +59,6 @@ def qureo_grade_menu():
     )
     return markup
 
-# نظام التحقق من الاشتراك الإجباري
 _sub_ok = {}
 
 class SubscriptionCheckError(Exception):
@@ -138,7 +137,6 @@ def fallback(message):
     if not gate_message(message):
         return
     
-    # معالجة خطوات إدخال اليوزر والباسورد للمنصة
     flow = qr_flow.get(chat_id)
     if flow:
         text = (message.text or "").strip()
@@ -160,16 +158,23 @@ def fallback(message):
             except Exception:
                 pass
             
-            wait_msg = bot.send_message(chat_id, "🚀 جاري تشغيل المتصفح والدخول للمنصة في الخلفية...")
+            # رسالة البداية لشريط التقدم
+            wait_msg = bot.send_message(chat_id, "🚀 <b>جاري بدء النظام...</b>\n[░░░░░░░░░░] 10%")
             
+            def update_progress_bar(status_text):
+                try:
+                    bot.edit_message_text(status_text, chat_id, wait_msg.message_id)
+                except Exception:
+                    pass
+
             def run_solver():
                 try:
-                    qureo.solve_qureo_automatically(username, password)
+                    qureo.solve_qureo_automatically(username, password, progress_callback=update_progress_bar)
                     bot.edit_message_text("✅ <b>تمت العملية بنجاح!</b>\n\nتم الدخول على حسابك وحل الفصول المطلوبة.", chat_id, wait_msg.message_id)
                 except qureo.LoginFailed:
-                    bot.edit_message_text("❌ <b>فشل تسجيل الدخول:</b> التأكد من صحة اسم المستخدم أو كلمة المرور.", chat_id, wait_msg.message_id)
+                    bot.edit_message_text("❌ <b>فشل تسجيل الدخول:</b> تأكد من صحة اسم المستخدم أو كلمة المرور.", chat_id, wait_msg.message_id)
                 except Exception as e:
-                    bot.edit_message_text(f"⚠️ <b>حدث خطأ:</b> {str(e)}", chat_id, wait_msg.message_id)
+                    bot.edit_message_text(f"⚠️ <b>حدث خطأ أو تعليق:</b> {str(e)}", chat_id, wait_msg.message_id)
 
             threading.Thread(target=run_solver, daemon=True).start()
             return
@@ -205,5 +210,5 @@ def handle_callbacks(call):
         bot.edit_message_text(f"📞 التواصل مع المالك:\nتليجرام: @{esc(OWNER_TELEGRAM)}\nواتساب: {esc(OWNER_WHATSAPP)}", chat_id, msg_id, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 القائمة", callback_data="menu")]]))
 
 if __name__ == "__main__":
-    logger.info("Bot is starting up with automation support...")
+    logger.info("Bot is starting up with interactive progress bar...")
     bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
