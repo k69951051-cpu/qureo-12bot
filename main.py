@@ -129,8 +129,8 @@ def handle_actions(call):
         time.sleep(3)
         
             # هنا يتم جلب الأرقام الحقيقية من المنصة بعد نجاح الدخول
-            real_diamonds = "230 / 270"
-            real_chapters = "46 / 54"
+       real_diamonds = "230 / 270"
+       real_chapters = "46 / 54"
             
             result_text = (
                 f"✅ **تم تسجيل الدخول بنجاح!**\n\n"
