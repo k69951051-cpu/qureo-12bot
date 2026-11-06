@@ -563,4 +563,4 @@ def handle_callbacks(call):
         if st["course"] is None:
             return
         chapter, _ = current_question(st)
-        if st["q"] + 
+        if st["q"] 
