@@ -127,7 +127,7 @@ def qureo_execute_solution(login_id, password, course_code, target):
 
     except Exception as e:
         logger.error(f"Execution Error: {str(e)}")
-        return False, fحدث خطأ أثناء الاتصال بالمنصة: {str(e)}"
+        return False, fحدث خطأ أثناء الاتصال بالمنصة: {str(e)}
 
 
 # =========================
