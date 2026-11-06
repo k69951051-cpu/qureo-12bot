@@ -5,100 +5,139 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # =========================
-# Configuration
+# CONFIG
 # =========================
 
 BOT_TOKEN = "9150114718:AAHwz8AxdEp_APewCSDy3zoxoB8vkdEHJdc"
-QUREO_BASE = "https://me-tp.qureo.education"
-
-# Optional official API bearer token, if required
 QUREO_TOKEN = os.getenv("QUREO_BEARER_TOKEN", "")
 
+BASE_URL = "https://me-tp.qureo.education"
+SPX_LOGIN = "https://egy.app.spx-learning-square.com/login"
+
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN is missing!")
+    raise RuntimeError("BOT_TOKEN is required")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-GRADES = [
-    "الصف الأول الثانوي",
-    "الصف الثاني الثانوي",
-    "الصف الثالث الثانوي"
-]
+# Temporary conversation state only
+users = {}
 
-def keyboard(rows):
-    markup = InlineKeyboardMarkup()
+# =========================
+# KEYBOARDS
+# =========================
+
+def make_keyboard(rows):
+    kb = InlineKeyboardMarkup()
+
     for row in rows:
-        markup.row(*[
-            InlineKeyboardButton(text, callback_data=data)
-            for text, data in row
+        kb.row(*[
+            InlineKeyboardButton(
+                text=label,
+                callback_data=value
+            )
+            for label, value in row
         ])
-    return markup
+
+    return kb
 
 
-def api_get(path):
-    headers = {"Accept": "application/json"}
+def main_menu(chat_id):
+    users.setdefault(chat_id, {})
+
+    bot.send_message(
+        chat_id,
+        "🎓 أهلاً بك في SPX Student Bot\n\n"
+        "اختر مرحلتك الدراسية:",
+        reply_markup=make_keyboard([
+            [
+                ("أولى ثانوي", "first"),
+                ("تانية بكالوريا", "second")
+            ]
+        ])
+    )
+
+
+# =========================
+# API
+# =========================
+
+def get_qureo_data():
+    headers = {
+        "Accept": "application/json"
+    }
 
     if QUREO_TOKEN:
-        headers["Authorization"] = f"Bearer {QUREO_TOKEN}"
+        headers["Authorization"] = (
+            f"Bearer {QUREO_TOKEN}"
+        )
 
-    response = requests.get(
-        QUREO_BASE + path,
+    chapters_response = requests.get(
+        BASE_URL +
+        "/api/study/students/sections/106/chapters",
         headers=headers,
         timeout=20
     )
 
-    response.raise_for_status()
-    return response.json()
+    chapters_response.raise_for_status()
+    chapters = chapters_response.json()
 
-
-def get_python_data():
-    chapters = api_get(
-        "/api/study/students/sections/106/chapters"
+    diamond_response = requests.get(
+        BASE_URL +
+        "/api/study/students/courses/python_short_ar/diamond",
+        headers=headers,
+        timeout=20
     )
 
-    diamonds = api_get(
-        "/api/study/students/courses/python_short_ar/diamond"
-    )
-
-    if not isinstance(chapters, list):
-        raise ValueError("Unexpected chapters response")
+    diamond_response.raise_for_status()
+    diamonds = diamond_response.json()
 
     return chapters, diamonds
 
 
-def format_diamonds(data, chapters):
-    if isinstance(data, int):
-        return data
+def get_total_diamonds(chapters, diamonds):
+    if isinstance(diamonds, (int, float)):
+        return diamonds
 
-    if isinstance(data, dict):
+    if isinstance(diamonds, dict):
         for key in ("diamond", "diamonds", "total"):
-            if isinstance(data.get(key), (int, float)):
-                return data[key]
+            value = diamonds.get(key)
+
+            if isinstance(value, (int, float)):
+                return value
 
     return sum(
-        int(chapter.get("diamond", 0))
-        for chapter in chapters
+        int(item.get("diamond", 0))
+        for item in chapters
     )
 
 
 def show_python(chat_id):
-    bot.send_message(chat_id, "⏳ جاري تحميل بيانات Python...")
+    bot.send_message(
+        chat_id,
+        "⏳ جاري تحميل بيانات Python..."
+    )
 
     try:
-        chapters, diamond_data = get_python_data()
-        total = format_diamonds(diamond_data, chapters)
+        chapters, diamonds = get_qureo_data()
 
-        message = (
-            "🐍 <b>تقرير كورس Python</b>\n\n"
-            f"💎 إجمالي الماسات: <b>{total}</b>\n"
-            f"📚 عدد الفصول: <b>{len(chapters)}</b>\n\n"
+        total = get_total_diamonds(
+            chapters,
+            diamonds
+        )
+
+        text = (
+            "🐍 <b>تقرير Python</b>\n\n"
+            f"💎 إجمالي الماسات: {total}\n"
+            f"📚 عدد الفصول: {len(chapters)}\n"
             "━━━━━━━━━━━━━━\n"
         )
 
-        for index, chapter in enumerate(chapters, 1):
-            message += (
-                f"\n📖 <b>الفصل {index}</b>\n"
-                f"🆔 رقم الفصل: {chapter.get('chapter_id', '-')}\n"
+        for index, chapter in enumerate(
+            chapters, start=1
+        ):
+            text += (
+                f"\n📖 الفصل {index}\n"
+                f"🆔 ID: {chapter.get('chapter_id')}\n"
                 f"💎 الماسات: {chapter.get('diamond', 0)}\n"
                 f"✅ أفضل إجابات صحيحة: "
                 f"{chapter.get('best_correct_count', 0)}\n"
@@ -107,114 +146,159 @@ def show_python(chat_id):
 
         bot.send_message(
             chat_id,
-            message,
+            text,
             parse_mode="HTML",
-            reply_markup=keyboard([
-                [("🔄 تحديث البيانات", "python")],
-                [("↩️ القائمة الرئيسية", "home")]
+            reply_markup=make_keyboard([
+                [("🔄 تحديث", "python")],
+                [("🏠 الرئيسية", "home")]
             ])
         )
 
     except requests.exceptions.HTTPError as error:
-        status = error.response.status_code
-        if status in (401, 403):
-            msg = "الحساب يحتاج صلاحية دخول رسمية للـ API."
-        else:
-            msg = f"خطأ من السيرفر: {status}"
+        code = error.response.status_code
 
-        bot.send_message(chat_id, "⚠️ " + msg)
+        if code in (401, 403):
+            message = (
+                "الحساب يحتاج تسجيل دخول وصلاحية رسمية "
+                "للوصول إلى Qureo."
+            )
+        else:
+            message = f"خطأ HTTP: {code}"
+
+        bot.send_message(
+            chat_id,
+            "⚠️ " + message
+        )
 
     except requests.exceptions.RequestException:
         bot.send_message(
             chat_id,
-            "⚠️ تعذر الاتصال بـ Qureo. حاول مرة أخرى."
+            "⚠️ تعذر الاتصال بالسيرفر."
         )
 
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError):
         bot.send_message(
             chat_id,
-            "⚠️ صيغة البيانات المستلمة غير متوقعة."
-        )
-
-    except Exception:
-        bot.send_message(
-            chat_id,
-            "⚠️ حصل خطأ غير متوقع."
+            "⚠️ صيغة البيانات غير متوقعة."
         )
 
 
-def show_home(chat_id):
-    bot.send_message(
-        chat_id,
-        "🎓 <b>أهلاً بك في بوت متابعة الكورسات</b>\n\n"
-        "اختر الصف الدراسي:",
-        parse_mode="HTML",
-        reply_markup=keyboard([
-            [(grade, f"grade_{i}")]
-            for i, grade in enumerate(GRADES)
-        ])
-    )
-
+# =========================
+# START
+# =========================
 
 @bot.message_handler(commands=["start"])
 def start(message):
-    show_home(message.chat.id)
+    chat_id = message.chat.id
+    users[chat_id] = {}
+    main_menu(chat_id)
 
 
-@bot.message_handler(commands=["help"])
-def help_command(message):
-    bot.send_message(
-        message.chat.id,
-        "استخدم /start لبدء البوت."
-    )
+# =========================
+# CALLBACKS
+# =========================
 
-
-@bot.callback_query_handler(func=lambda call: True)
-def callbacks(call):
-    data = call.data
+@bot.callback_query_handler(
+    func=lambda call: True
+)
+def callback(call):
     chat_id = call.message.chat.id
+    data = call.data
 
     bot.answer_callback_query(call.id)
 
+    users.setdefault(chat_id, {})
+
     if data == "home":
-        show_home(chat_id)
+        main_menu(chat_id)
 
-    elif data.startswith("grade_"):
-        grade_index = int(data.split("_")[1])
-
-        if not 0 <= grade_index < len(GRADES):
-            return
+    elif data in ("first", "second"):
+        users[chat_id]["stage"] = data
 
         bot.send_message(
             chat_id,
-            f"📚 {GRADES[grade_index]}\n\nاختر المادة:",
-            reply_markup=keyboard([
-                [("🐍 Python", "python")],
-                [("💻 JavaScript", "javascript")],
-                [("💰 الثقافة المالية", "finance")],
-                [("↩️ رجوع", "home")]
+            "اختر نوع التعليم:",
+            reply_markup=make_keyboard([
+                [
+                    ("عام", "general"),
+                    ("فني", "technical")
+                ],
+                [("أزهر", "azhar")],
+                [("رجوع", "home")]
             ])
         )
 
+    elif data in ("general", "technical", "azhar"):
+        users[chat_id]["education"] = data
+
+        options = [
+            [("Qureo", "qureo")]
+        ]
+
+        if users[chat_id]["stage"] == "second":
+            options.append(
+                [("الثقافة المالية", "finance")]
+            )
+
+        options.append(
+            [("رجوع", "home")]
+        )
+
+        bot.send_message(
+            chat_id,
+            "اختر المنصة:",
+            reply_markup=make_keyboard(options)
+        )
+
+    elif data == "qureo":
+        stage = users[chat_id]["stage"]
+
+        options = []
+
+        if stage == "second":
+            options.append(
+                [("Python", "python")]
+            )
+
+        options.append(
+            [("JavaScript", "javascript")]
+        )
+
+        options.append(
+            [("رجوع", "home")]
+        )
+
+        bot.send_message(
+            chat_id,
+            "اختر الكورس:",
+            reply_markup=make_keyboard(options)
+        )
+
     elif data == "python":
+        users[chat_id]["course"] = "python"
         show_python(chat_id)
 
     elif data == "javascript":
         bot.send_message(
             chat_id,
-            "💻 كورس JavaScript موجود، لكن نحتاج "
-            "رابط API الخاص بفصوله قبل تفعيل عرض بياناته."
+            "💻 JavaScript\n"
+            "نحتاج تحديد واجهة API الخاصة بالكورس."
         )
 
     elif data == "finance":
         bot.send_message(
             chat_id,
-            "💰 الثقافة المالية موجودة على SPX، "
-            "ونحتاج واجهة API الرسمية للفصول لتفعيلها."
+            "💰 الثقافة المالية\n"
+            "نحتاج تحديد واجهة API الخاصة بها."
         )
 
 
-print("Telegram bot is running...")
+# =========================
+# RUN
+# =========================
+
+print("SPX Bot is running...")
+
 bot.infinity_polling(
     skip_pending=True,
     timeout=30,
