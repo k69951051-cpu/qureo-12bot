@@ -10,10 +10,10 @@ from telebot import types
 # إعدادات البوت
 # ==============================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN ="9150114718:AAHwz8AxdEp_APewCSDy3zoxoB8vkdEHJdc"
 
-if not BOT_TOKEN:"9150114718:AAHwz8AxdEp_APewCSDy3zoxoB8vkdEHJdc"
-    raise RuntimeError("Missing BOT_TOKEN environment variable")
+if not BOT_TOKEN:
+   raise RuntimeError("Missing BOT_TOKEN environment variable")
 
 logging.basicConfig(
     level=logging.INFO,
