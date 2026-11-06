@@ -1,160 +1,383 @@
-import time
+
+import os
+import logging
+from typing import Optional, Dict, Any
+
 import telebot
 from telebot import types
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
-TOKEN = "9150114718:AAEQ5932O0vBoL8_aCgcJUGRKkLxsP7m5QU"
-bot = telebot.TeleBot(TOKEN)
+# ==============================
+# إعدادات البوت
+# ==============================
 
-user_data = {}
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    chat_id = message.chat.id
-    user_data[chat_id] = {'step': 'waiting_id'}
-    bot.send_message(
-        chat_id, 
-        "🤖 **مساعد Qureo الذكي**\n\nأهلاً بك! أرسل رقم الدخول (Login ID) الخاص بك الآن:"
-    )
+if not BOT_TOKEN:
+    raise RuntimeError("Missing BOT_TOKEN environment variable")
 
-@bot.message_handler(func=lambda message: user_data.get(message.chat.id, {}).get('step') == 'waiting_id')
-def receive_id(message):
-    chat_id = message.chat.id
-    user_data[chat_id]['id'] = message.text
-    user_data[chat_id]['step'] = 'waiting_password'
-    bot.reply_to(message, "🔑 **الآن أرسل كلمة المرور (Password)**\n*(سأحذف رسالتك فوراً للأمان 🔒)*")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s"
+)
 
-@bot.message_handler(func=lambda message: user_data.get(message.chat.id, {}).get('step') == 'waiting_password')
-def receive_password(message):
-    chat_id = message.chat.id
-    user_data[chat_id]['password'] = message.text
-    
-    try:
-        bot.delete_message(chat_id, message.message_id)
-    except:
-        pass
-    
-    user_data[chat_id]['step'] = 'choose_grade'
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📘 الصف الأول الثانوي", callback_data="grade_1st"),
-        types.InlineKeyboardButton("📘 الصف الثاني الثانوي", callback_data="grade_2nd")
-    )
-    
-    bot.send_message(chat_id, "🔒 **تم استلام بياناتك بأمان.**\n\n📌 اختر الصف الدراسي:", reply_markup=markup)
+logger = logging.getLogger("qureo_bot")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("grade_"))
-def choose_grade(call):
-    chat_id = call.message.chat.id
-    grade_map = {"grade_1st": "الصف الأول الثانوي", "grade_2nd": "الصف الثاني الثانوي"}
-    user_data[chat_id]['grade'] = grade_map.get(call.data)
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    if call.data == "grade_1st":
-        markup.add(
-            types.InlineKeyboardButton("💻 جافا سكريبت (JavaScript)", callback_data="course_js"),
-            types.InlineKeyboardButton("📊 الثقافة المالية", callback_data="course_financial")
-        )
-    else:
-        markup.add(
-            types.InlineKeyboardButton("🐍 بايثون (Python)", callback_data="course_python"),
-            types.InlineKeyboardButton("💻 جافا سكريبت (JavaScript)", callback_data="course_js"),
-            types.InlineKeyboardButton("📊 الثقافة المالية", callback_data="course_financial")
-        )
-    
-    bot.edit_message_text(
-        f"📌 الصف: **{user_data[chat_id]['grade']}**\n\nاختر الكورس المطلوب:",
-        chat_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown"
-    )
+bot = telebot.TeleBot(TOKEN if False else BOT_TOKEN, parse_mode="HTML")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("course_"))
-def choose_course(call):
-    chat_id = call.message.chat.id
-    course_map = {
-        "course_js": "جافا سكريبت (JavaScript)",
-        "course_python": "بايثون (Python)",
-        "course_financial": "الثقافة المالية"
+sessions: Dict[int, Dict[str, Any]] = {}
+
+# ==============================
+# بيانات الصفوف
+# ==============================
+
+GRADE_LABELS = {
+    "grade_1st": "الصف الأول الثانوي",
+    "grade_2nd": "الصف الثاني الثانوي"
+}
+
+COURSES = {
+    "javascript": {
+        "label": "جافا سكريبت (JavaScript)",
+        "provider": "QUREO",
+        "diamonds": True,
+        "chapters": True,
+        "path": "/course/javascript_ar"
+    },
+    "python": {
+        "label": "بايثون (Python)",
+        "provider": "QUREO",
+        "diamonds": True,
+        "chapters": True,
+        "path": "/course/python_short_ar"
+    },
+    "financial": {
+        "label": "الثقافة المالية",
+        "provider": "SPX Learning Square",
+        "diamonds": False,
+        "chapters": True,
+        "path": "/dashboard"
     }
-    user_data[chat_id]['course'] = course_map.get(call.data)
-    data = user_data.get(chat_id, {})
-    
-    summary_text = (
-        "📋 **ملخص طلبك:**\n\n"
-        f"👤 **رقم الدخول:** `{data.get('id')}`\n"
-        f"📚 **الصف:** {data.get('grade')}\n"
-        f"🎯 **الكورس:** {data.get('course')}"
-    )
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("🚀 تسجيل الدخول وجلب البيانات الحقيقية", callback_data="confirm_action"),
-        types.InlineKeyboardButton("❌ إلغاء", callback_data="cancel_action")
-    )
-    
-    bot.edit_message_text(summary_text, chat_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+}
 
-@bot.callback_query_handler(func=lambda call: call.data in ["confirm_action", "cancel_action"])
-def handle_actions(call):
-    chat_id = call.message.chat.id
-    data = user_data.get(chat_id, {})
-    
-    if call.data == "confirm_action":
-        bot.answer_callback_query(call.id, "جاري بدء الاتصال...")
-        user_id = data.get('id')
-        password = data.get('password')
-        grade = data.get('grade')
-        course = data.get('course')
-        
-        bot.edit_message_text("⏳ **جارٍ فتح المنصة وتسجيل الدخول...**", chat_id, call.message.message_id, parse_mode="Markdown")
 
-        driver = None
-    try:
-        options = webdriver.ChromeOptions()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        
-        # أضف السطرين دول هنا لتحديد مسارات السيرفر السحابي:
-        options.binary_location = "/usr/bin/chromium"
-        service = Service("/usr/bin/chromedriver")
-        
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.get("https://p.qureo.education/") # (أو رابط المنصة الخاص بك)
-        time.sleep(3)
-        
-            # هنا يتم جلب الأرقام الحقيقية من المنصة بعد نجاح الدخول
-       real_diamonds = "230 / 270"
-       real_chapters = "46 / 54"
-            
-            result_text = (
-                f"✅ **تم تسجيل الدخول بنجاح!**\n\n"
-                f"👤 الحساب: `{user_id}`\n"
-                f"📌 الصف: {grade}\n"
-                f"📚 الكورس: {course}\n"
-                f"💎 **الألماس المكتسب:** {real_diamonds}\n"
-                f"📚 **الفصول المكتملة:** {real_chapters}"
+def reset_session(chat_id):
+    sessions.pop(chat_id, None)
+
+
+def get_course_keyboard(grade_code):
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+    allowed = ["javascript", "financial"]
+
+    if grade_code == "grade_2nd":
+        allowed.insert(1, "python")
+
+    for key in allowed:
+        keyboard.add(
+            types.InlineKeyboardButton(
+                COURSES[key]["label"],
+                callback_data=f"course_{key}"
             )
-            bot.send_message(chat_id, result_text, parse_mode="Markdown")
-            
-        except Exception as e:
-            bot.send_message(chat_id, f"❌ حدث خطأ:\n`{str(e)}`", parse_mode="Markdown")
-        finally:
-            if driver:
-                driver.quit()
-                
-        if chat_id in user_data:
-            del user_data[chat_id]
-            
-    elif call.data == "cancel_action":
-        bot.edit_message_text("❌ تم إلغاء العملية.", chat_id, call.message.message_id)
-        if chat_id in user_data:
-            del user_data[chat_id]
+        )
 
-print("البوت يعمل...")
-bot.polling()
+    return keyboard
+
+
+# ==============================
+# مصدر بيانات QUREO و SPX
+# ==============================
+
+def fetch_progress(course_key, student_id):
+    """
+    مكان ربط API رسمي ومصرح به.
+
+    الشكل المتوقع للبيانات:
+
+    {
+        "chapters": "12 / 20",
+        "diamonds": "230 / 270"
+    }
+
+    الثقافة المالية لا تحتاج diamonds.
+    """
+
+    # لم يتم توفير API رسمي حتى الآن.
+    return None
+
+
+# ==============================
+# بدء البوت
+# ==============================
+
+@bot.message_handler(commands=["start"])
+def start(message):
+
+    chat_id = message.chat.id
+
+    sessions[chat_id] = {
+        "step": "waiting_student_id"
+    }
+
+    bot.send_message(
+        chat_id,
+        "🤖 <b>مساعد QUREO الذكي</b>\n\n"
+        "أهلاً بك!\n"
+        "أرسل رقم الطالب أو المعرّف المسموح بمشاركته.\n\n"
+        "⚠️ لا ترسل كلمة المرور أو رمز التحقق."
+    )
+
+
+# ==============================
+# استقبال رقم الطالب
+# ==============================
+
+@bot.message_handler(
+    func=lambda m:
+    sessions.get(m.chat.id, {}).get("step") == "waiting_student_id"
+)
+def receive_student_id(message):
+
+    chat_id = message.chat.id
+    student_id = (message.text or "").strip()
+
+    if not student_id or len(student_id) > 80:
+        bot.reply_to(message, "❌ رقم الطالب غير صالح.")
+        return
+
+    sessions[chat_id]["student_id"] = student_id
+    sessions[chat_id]["step"] = "choose_grade"
+
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "📘 الصف الأول الثانوي",
+            callback_data="grade_1st"
+        ),
+        types.InlineKeyboardButton(
+            "📘 الصف الثاني الثانوي",
+            callback_data="grade_2nd"
+        )
+    )
+
+    bot.send_message(
+        chat_id,
+        "📌 اختر الصف الدراسي:",
+        reply_markup=keyboard
+    )
+
+
+# ==============================
+# اختيار الصف
+# ==============================
+
+@bot.callback_query_handler(
+    func=lambda c: c.data in GRADE_LABELS
+)
+def choose_grade(call):
+
+    chat_id = call.message.chat.id
+    data = sessions.get(chat_id)
+
+    if not data or data.get("step") != "choose_grade":
+        bot.answer_callback_query(call.id, "ابدأ من جديد باستخدام /start")
+        return
+
+    data["grade_code"] = call.data
+    data["grade"] = GRADE_LABELS[call.data]
+    data["step"] = "choose_course"
+
+    bot.answer_callback_query(call.id)
+
+    bot.edit_message_text(
+        f"📌 الصف: <b>{data['grade']}</b>\n\n"
+        "🎯 اختر الكورس:",
+        chat_id,
+        call.message.message_id,
+        reply_markup=get_course_keyboard(call.data)
+    )
+
+
+# ==============================
+# اختيار الكورس
+# ==============================
+
+@bot.callback_query_handler(
+    func=lambda c: c.data.startswith("course_")
+)
+def choose_course(call):
+
+    chat_id = call.message.chat.id
+    data = sessions.get(chat_id)
+
+    if not data or data.get("step") != "choose_course":
+        bot.answer_callback_query(call.id, "انتهت الجلسة.")
+        return
+
+    course_key = call.data.replace("course_", "")
+
+    if course_key not in COURSES:
+        bot.answer_callback_query(call.id, "اختيار غير صحيح.")
+        return
+
+    if course_key == "python" and data["grade_code"] != "grade_2nd":
+        bot.answer_callback_query(call.id, "الكورس غير متاح لهذا الصف.")
+        return
+
+    data["course_key"] = course_key
+    data["step"] = "confirmation"
+
+    course = COURSES[course_key]
+
+    summary = (
+        "📋 <b>ملخص الطلب</b>\n\n"
+        f"📚 الصف: {data['grade']}\n"
+        f"🎯 الكورس: {course['label']}\n"
+        f"🌐 المنصة: {course['provider']}\n\n"
+        "هل تريد المتابعة؟"
+    )
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "🚀 متابعة",
+            callback_data="confirm"
+        ),
+        types.InlineKeyboardButton(
+            "❌ إلغاء",
+            callback_data="cancel"
+        )
+    )
+
+    bot.answer_callback_query(call.id)
+
+    bot.edit_message_text(
+        summary,
+        chat_id,
+        call.message.message_id,
+        reply_markup=keyboard
+    )
+
+
+# ==============================
+# التأكيد والإلغاء
+# ==============================
+
+@bot.callback_query_handler(
+    func=lambda c: c.data in ["confirm", "cancel"]
+)
+def handle_actions(call):
+
+    chat_id = call.message.chat.id
+    data = sessions.get(chat_id)
+
+    if not data or data.get("step") != "confirmation":
+        bot.answer_callback_query(call.id, "انتهت الجلسة.")
+        return
+
+    if call.data == "cancel":
+
+        bot.answer_callback_query(call.id)
+
+        bot.edit_message_text(
+            "❌ تم إلغاء العملية.",
+            chat_id,
+            call.message.message_id
+        )
+
+        reset_session(chat_id)
+        return
+
+    bot.answer_callback_query(call.id, "جاري المعالجة...")
+
+    bot.edit_message_text(
+        "⏳ جاري طلب بيانات التقدم...",
+        chat_id,
+        call.message.message_id
+    )
+
+    try:
+
+        course_key = data["course_key"]
+        course = COURSES[course_key]
+
+        progress = fetch_progress(
+            course_key,
+            data["student_id"]
+        )
+
+        if progress is None:
+
+            bot.send_message(
+                chat_id,
+                "⚠️ لم يتم ربط مصدر البيانات الرسمي بعد.\n\n"
+                "اختيارات الصف والكورس تعمل، لكن جلب "
+                "الألماس والفصول يحتاج واجهة رسمية "
+                "من QUREO أو SPX."
+            )
+
+            return
+
+        chapters = progress.get("chapters")
+
+        if not chapters:
+            raise ValueError("Chapter data is missing")
+
+        result = (
+            "✅ <b>بيانات التقدم</b>\n\n"
+            f"📚 الصف: {data['grade']}\n"
+            f"🎯 الكورس: {course['label']}\n"
+            f"📖 الفصول المكتملة: {chapters}"
+        )
+
+        if course["diamonds"]:
+            diamonds = progress.get("diamonds")
+
+            if diamonds:
+                result += f"\n💎 الألماس: {diamonds}"
+
+        bot.send_message(chat_id, result)
+
+    except Exception:
+
+        logger.exception("Progress lookup error")
+
+        bot.send_message(
+            chat_id,
+            "❌ حدث خطأ أثناء معالجة الطلب. حاول لاحقاً."
+        )
+
+    finally:
+        reset_session(chat_id)
+
+
+# ==============================
+# إلغاء العملية
+# ==============================
+
+@bot.message_handler(commands=["cancel"])
+def cancel(message):
+
+    reset_session(message.chat.id)
+
+    bot.send_message(
+        message.chat.id,
+        "❌ تم إلغاء العملية.\n"
+        "استخدم /start للبدء من جديد."
+    )
+
+
+# ==============================
+# تشغيل البوت
+# ==============================
+
+if __name__ == "__main__":
+
+    logger.info("QUREO Bot is starting...")
+
+    bot.infinity_polling(
+        skip_pending=True,
+        timeout=30,
+        long_polling_timeout=30
+    )
