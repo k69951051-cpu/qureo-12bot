@@ -161,6 +161,112 @@ COURSES = {
 }
 
 # =========================
+# BOOKS LIBRARY
+# كتب مجانية ومتاحة قانونياً من مواقع المؤلفين أنفسهم
+# لإضافة كتاب جديد: أضف قاموساً جديداً بنفس الشكل
+# =========================
+
+BOOKS = [
+    {
+        "title": "Automate the Boring Stuff with Python",
+        "author": "Al Sweigart",
+        "level": "مبتدئ",
+        "topic": "Python",
+        "desc": "كتاب عملي يعلمك بايثون عبر أمثلة لأتمتة المهام اليومية مثل التعامل مع الملفات والجداول.",
+        "url": "https://automatetheboringstuff.com/",
+    },
+    {
+        "title": "Think Python (2nd Edition)",
+        "author": "Allen B. Downey",
+        "level": "مبتدئ",
+        "topic": "Python",
+        "desc": "يشرح أساسيات البرمجة والتفكير الحاسوبي بأسلوب مبسط، مناسب جداً للمبتدئين تماماً.",
+        "url": "https://greenteapress.com/wp/think-python-2e/",
+    },
+    {
+        "title": "Eloquent JavaScript",
+        "author": "Marijn Haverbeke",
+        "level": "متوسط",
+        "topic": "JavaScript",
+        "desc": "كتاب شامل يغطي اللغة من الأساس حتى المفاهيم المتقدمة، ويحتوي على تمارين تفاعلية.",
+        "url": "https://eloquentjavascript.net/",
+    },
+    {
+        "title": "The Modern JavaScript Tutorial",
+        "author": "Ilya Kantor (javascript.info)",
+        "level": "مبتدئ إلى متقدم",
+        "topic": "JavaScript",
+        "desc": "شرح مفصل ومحدّث لـ JavaScript الحديثة مع أمثلة ومهام للتطبيق بعد كل درس.",
+        "url": "https://javascript.info/",
+    },
+]
+
+# =========================
+# SCHOOL LIBRARY (حسب الصف والمادة)
+# "url": ضع هنا رابط الكتاب (قناتك أو الموقع الرسمي للناشر)، أو اتركه None حتى يتوفر
+# =========================
+
+SCHOOL = {
+    "g1": {
+        "name": "🎓 أولى ثانوي",
+        "subjects": [],
+    },
+    "bac2": {
+        "name": "🎓 تانية بكالوريا",
+        "subjects": [
+            {
+                "name": "التاريخ الوطني",
+                "books": [
+                    {"title": "كتاب الامتحان - الجزء الأول (2027)", "url": None},
+                ],
+            },
+            {
+                "name": "اللغة العربية",
+                "books": [
+                    {"title": "كتاب كيان - الجزء الأول (2027)", "url": None},
+                    {"title": "كتاب كيان - الجزء الثاني (2027)", "url": None},
+                ],
+            },
+        ],
+    },
+}
+
+
+def library_home():
+    markup = InlineKeyboardMarkup(row_width=1)
+    for key, grade in SCHOOL.items():
+        markup.add(InlineKeyboardButton(grade["name"], callback_data=f"g:{key}"))
+    markup.add(
+        InlineKeyboardButton("💻 كتب البرمجة", callback_data="prog"),
+        InlineKeyboardButton("⬅️ رجوع", callback_data="menu"),
+    )
+    return markup
+
+
+def subjects_menu(grade_key):
+    markup = InlineKeyboardMarkup(row_width=1)
+    for i, subject in enumerate(SCHOOL[grade_key]["subjects"]):
+        markup.add(InlineKeyboardButton(f"📘 {subject['name']}", callback_data=f"s:{grade_key}:{i}"))
+    markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data="lib"))
+    return markup
+
+
+def subject_books_view(grade_key, idx):
+    grade = SCHOOL[grade_key]
+    subject = grade["subjects"][idx]
+    lines = [f"{grade['name']} - <b>{subject['name']}</b>\n"]
+    markup = InlineKeyboardMarkup(row_width=1)
+    for book in subject["books"]:
+        if book["url"]:
+            lines.append(f"📖 {book['title']}")
+            markup.add(InlineKeyboardButton(f"🔗 {book['title']}", url=book["url"]))
+        else:
+            lines.append(f"⏳ {book['title']} (الرابط سيُضاف قريباً)")
+    markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=f"g:{grade_key}"))
+    return "\n".join(lines), markup
+
+
+# =========================
 # HELPERS
 # =========================
 
@@ -208,7 +314,36 @@ def courses_menu():
     markup = InlineKeyboardMarkup(row_width=1)
     for key, course in COURSES.items():
         markup.add(InlineKeyboardButton(course["name"], callback_data=f"c:{key}"))
+    markup.add(InlineKeyboardButton("📚 مكتبة الكتب", callback_data="lib"))
     return markup
+
+
+def library_menu():
+    markup = InlineKeyboardMarkup(row_width=1)
+    for i, book in enumerate(BOOKS):
+        markup.add(InlineKeyboardButton(f"📖 {book['title']}", callback_data=f"b:{i}"))
+    markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data="lib"))
+    return markup
+
+
+def book_markup(index):
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("🔗 فتح الكتاب", url=BOOKS[index]["url"]),
+        InlineKeyboardButton("⬅️ كل الكتب", callback_data="prog"),
+    )
+    return markup
+
+
+def book_text(index):
+    b = BOOKS[index]
+    return (
+        f"📖 <b>{b['title']}</b>\n"
+        f"✍️ المؤلف: {b['author']}\n"
+        f"🏷️ الموضوع: {b['topic']}\n"
+        f"📶 المستوى: {b['level']}\n\n"
+        f"{b['desc']}"
+    )
 
 
 def chapters_menu(course_key):
@@ -333,6 +468,32 @@ def handle_callbacks(call):
         users[chat_id] = new_state()
         show(chat_id, msg_id, "📚 اختر الكورس:", courses_menu())
 
+    elif data == "lib":
+        show(chat_id, msg_id, "📚 <b>مكتبة الكتب</b>\n\nاختر الصف أو القسم:", library_home())
+
+    elif data == "prog":
+        show(chat_id, msg_id, "💻 <b>كتب البرمجة</b>\n\nاختر كتاباً لعرض تفاصيله:", library_menu())
+
+    elif data.startswith("g:"):
+        key = data.split(":")[1]
+        if key in SCHOOL:
+            if SCHOOL[key]["subjects"]:
+                text = f"{SCHOOL[key]['name']}\n\nاختر المادة:"
+            else:
+                text = f"{SCHOOL[key]['name']}\n\nلم تُضف كتب لهذا الصف بعد."
+            show(chat_id, msg_id, text, subjects_menu(key))
+
+    elif data.startswith("s:"):
+        _, key, idx = data.split(":")
+        if key in SCHOOL and 0 <= int(idx) < len(SCHOOL[key]["subjects"]):
+            text, markup = subject_books_view(key, int(idx))
+            show(chat_id, msg_id, text, markup)
+
+    elif data.startswith("b:"):
+        idx = int(data.split(":")[1])
+        if 0 <= idx < len(BOOKS):
+            show(chat_id, msg_id, book_text(idx), book_markup(idx))
+
     elif data.startswith("c:"):
         course_key = data.split(":")[1]
         if course_key in COURSES:
@@ -402,17 +563,4 @@ def handle_callbacks(call):
         if st["course"] is None:
             return
         chapter, _ = current_question(st)
-        if st["q"] + 1 < len(chapter["questions"]):
-            st["q"] += 1
-            show_question(chat_id, msg_id)
-        else:
-            show_result(chat_id, msg_id)
-
-
-# =========================
-# RUN BOT
-# =========================
-
-if __name__ == "__main__":
-    logger.info("Bot is starting up...")
-    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
+        if st["q"] + 
