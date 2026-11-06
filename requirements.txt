@@ -1,2 +1,1 @@
-pyTelegramBotAPI
-selenium
+pyTelegramBotAPI>=4.26,<5
