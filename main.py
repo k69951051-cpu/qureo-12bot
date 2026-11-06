@@ -127,7 +127,6 @@ def handle_actions(call):
         driver = webdriver.Chrome(service=service, options=options)
         driver.get("https://p.qureo.education/") # (أو رابط المنصة الخاص بك)
         time.sleep(3)
-            time.sleep(3)
             
             # محاكاة خطأ الباسورد لو البيانات غير صحيحة للتجربة الحقيقية
             if password == "wrong": # يمكنك تعديلها أو اختبارها
