@@ -10,7 +10,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # CONFIG
 # =========================
 
-BOT_TOKEN = "9150114718:AAHwz8AxdEp_APewCSDy3zoxoB8vkdEHJdc"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 QUREO_BEARER_TOKEN = os.getenv("QUREO_BEARER_TOKEN", "")
 
 BASE_URL = "https://me-tp.qureo.education"
@@ -149,7 +149,6 @@ def get_api_data(url):
 def format_data(data, max_length=3500):
     """
     عرض البيانات بصورة آمنة ومختصرة.
-    لا نفترض شكل JSON معين قبل رؤية استجابة API.
     """
     if data is None:
         return "لا توجد بيانات."
@@ -327,7 +326,7 @@ def callbacks(call):
         bot.send_message(
             chat_id,
             "بوت تعليمي تجريبي لعرض بيانات منصة Qureo.\n"
-            "تسجيل دخول الطلاب بحساباتهم الشخصية لم يتم تفعيله بعد."
+            "تسجيل دخول الطلاب بحساباتهم الشخصية تم توجيهه عبر التوكن."
         )
 
     else:
@@ -359,4 +358,4 @@ if __name__ == "__main__":
         skip_pending=True,
         timeout=30,
         long_polling_timeout=30
-    )
+        )
