@@ -2,6 +2,7 @@ import os
 import logging
 
 import telebot
+import library
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # =========================
@@ -203,39 +204,14 @@ BOOKS = [
 
 # =========================
 # SCHOOL LIBRARY (حسب الصف والمادة)
-# "url": ضع هنا رابط الكتاب (قناتك أو الموقع الرسمي للناشر)، أو اتركه None حتى يتوفر
+# الكتب تُضاف تلقائياً من بوت الإدارة (admin_bot.py) وتُقرأ من library.py
 # =========================
-
-SCHOOL = {
-    "g1": {
-        "name": "🎓 أولى ثانوي",
-        "subjects": [],
-    },
-    "bac2": {
-        "name": "🎓 تانية بكالوريا",
-        "subjects": [
-            {
-                "name": "التاريخ الوطني",
-                "books": [
-                    {"title": "كتاب الامتحان - الجزء الأول (2027)", "url": None},
-                ],
-            },
-            {
-                "name": "اللغة العربية",
-                "books": [
-                    {"title": "كتاب كيان - الجزء الأول (2027)", "url": None},
-                    {"title": "كتاب كيان - الجزء الثاني (2027)", "url": None},
-                ],
-            },
-        ],
-    },
-}
 
 
 def library_home():
     markup = InlineKeyboardMarkup(row_width=1)
-    for key, grade in SCHOOL.items():
-        markup.add(InlineKeyboardButton(grade["name"], callback_data=f"g:{key}"))
+    for key, name in library.GRADES.items():
+        markup.add(InlineKeyboardButton(name, callback_data=f"g:{key}"))
     markup.add(
         InlineKeyboardButton("💻 كتب البرمجة", callback_data="prog"),
         InlineKeyboardButton("⬅️ رجوع", callback_data="menu"),
@@ -245,23 +221,25 @@ def library_home():
 
 def subjects_menu(grade_key):
     markup = InlineKeyboardMarkup(row_width=1)
-    for i, subject in enumerate(SCHOOL[grade_key]["subjects"]):
-        markup.add(InlineKeyboardButton(f"📘 {subject['name']}", callback_data=f"s:{grade_key}:{i}"))
+    for i, name in enumerate(library.subjects(grade_key)):
+        markup.add(InlineKeyboardButton(f"📘 {name}", callback_data=f"s:{grade_key}:{i}"))
     markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data="lib"))
     return markup
 
 
 def subject_books_view(grade_key, idx):
-    grade = SCHOOL[grade_key]
-    subject = grade["subjects"][idx]
-    lines = [f"{grade['name']} - <b>{subject['name']}</b>\n"]
+    subject = library.subjects(grade_key)[idx]
+    books = library.books_for(grade_key, subject)
+    lines = [f"{library.GRADES[grade_key]} - <b>{subject}</b>\n"]
     markup = InlineKeyboardMarkup(row_width=1)
-    for book in subject["books"]:
-        if book["url"]:
-            lines.append(f"📖 {book['title']}")
+    if not books:
+        lines.append("لا توجد كتب في هذه المادة بعد.")
+    for book in books:
+        lines.append(f"📖 {book['title']}")
+        if book.get("file"):
+            markup.add(InlineKeyboardButton(f"📥 {book['title']}", callback_data=f"f:{book['id']}"))
+        elif book.get("url"):
             markup.add(InlineKeyboardButton(f"🔗 {book['title']}", url=book["url"]))
-        else:
-            lines.append(f"⏳ {book['title']} (الرابط سيُضاف قريباً)")
     markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=f"g:{grade_key}"))
     return "\n".join(lines), markup
 
@@ -476,18 +454,34 @@ def handle_callbacks(call):
 
     elif data.startswith("g:"):
         key = data.split(":")[1]
-        if key in SCHOOL:
-            if SCHOOL[key]["subjects"]:
-                text = f"{SCHOOL[key]['name']}\n\nاختر المادة:"
+        if key in library.GRADES:
+            if library.subjects(key):
+                text = f"{library.GRADES[key]}\n\nاختر المادة:"
             else:
-                text = f"{SCHOOL[key]['name']}\n\nلم تُضف كتب لهذا الصف بعد."
+                text = f"{library.GRADES[key]}\n\nلم تُضف كتب لهذا الصف بعد."
             show(chat_id, msg_id, text, subjects_menu(key))
 
     elif data.startswith("s:"):
         _, key, idx = data.split(":")
-        if key in SCHOOL and 0 <= int(idx) < len(SCHOOL[key]["subjects"]):
+        if key in library.GRADES and 0 <= int(idx) < len(library.subjects(key)):
             text, markup = subject_books_view(key, int(idx))
             show(chat_id, msg_id, text, markup)
+
+    elif data.startswith("f:"):
+        book = library.get_book(int(data.split(":")[1]))
+        if not book or not book.get("file"):
+            bot.send_message(chat_id, "⚠️ هذا الكتاب لم يعد متاحاً.")
+        else:
+            try:
+                if book.get("public_file_id"):
+                    bot.send_document(chat_id, book["public_file_id"], caption=book["title"])
+                else:
+                    with open(library.file_path(book["file"]), "rb") as f:
+                        sent = bot.send_document(chat_id, f, caption=book["title"])
+                    library.set_public_file_id(book["id"], sent.document.file_id)
+            except Exception as e:
+                logger.error("Failed to send book %s: %s", book["id"], e)
+                bot.send_message(chat_id, "⚠️ تعذر إرسال الكتاب الآن، حاول لاحقاً.")
 
     elif data.startswith("b:"):
         idx = int(data.split(":")[1])
@@ -563,4 +557,17 @@ def handle_callbacks(call):
         if st["course"] is None:
             return
         chapter, _ = current_question(st)
-        if st["q"] 
+        if st["q"] + 1 < len(chapter["questions"]):
+            st["q"] += 1
+            show_question(chat_id, msg_id)
+        else:
+            show_result(chat_id, msg_id)
+
+
+# =========================
+# RUN BOT
+# =========================
+
+if __name__ == "__main__":
+    logger.info("Bot is starting up...")
+    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
