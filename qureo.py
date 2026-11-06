@@ -14,12 +14,12 @@ def solve_qureo_automatically(username, password, chapter_id="all", progress_cal
     if progress_callback:
         progress_callback("🚀 <b>جاري تهيئة النظام...</b>\n[░░░░░░░░░░] 10%")
 
+    browser = None
     try:
         with sync_playwright() as p:
             if progress_callback:
                 progress_callback("🌐 <b>جاري تشغيل المتصفح في الخلفية...</b>\n[██░░░░░░░░] 25%")
             
-            # محاولة إطلاق المتصفح بالخلافة مع خيارات الأمان السحابية
             browser = p.chromium.launch(
                 headless=True,
                 args=[
@@ -54,15 +54,15 @@ def solve_qureo_automatically(username, password, chapter_id="all", progress_cal
             browser.close()
             return {"status": "success", "message": "تم الدخول بنجاح"}
             
-        except Exception as e:
-            if 'browser' in locals() and browser:
-                try:
-                    browser.close()
-                except:
-                    pass
-            if isinstance(e, LoginFailed):
-                raise e
-            raise QureoUnavailable(f"خطأ تقني: {str(e)}")
+    except Exception as e:
+        if browser:
+            try:
+                browser.close()
+            except:
+                pass
+        if isinstance(e, LoginFailed):
+            raise e
+        raise QureoUnavailable(f"خطأ تقني: {str(e)}")
 
 def fetch_progress(username, password):
     if not username or not password:
