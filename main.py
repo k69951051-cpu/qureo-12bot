@@ -2,6 +2,7 @@ import time
 import telebot
 from telebot import types
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -110,17 +111,22 @@ def handle_actions(call):
         course = data.get('course')
         
         bot.edit_message_text("⏳ **جارٍ فتح المنصة وتسجيل الدخول...**", chat_id, call.message.message_id, parse_mode="Markdown")
-        
+
         driver = None
-        try:
-            options = webdriver.ChromeOptions()
-            options.add_argument("--headless")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            
-            driver = webdriver.Chrome(options=options)
-            driver.get("https://sprixportal.jp/")
+    try:
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        
+        # أضف السطرين دول هنا لتحديد مسارات السيرفر السحابي:
+        options.binary_location = "/usr/bin/chromium"
+        service = Service("/usr/bin/chromedriver")
+        
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.get("https://p.qureo.education/") # (أو رابط المنصة الخاص بك)
+        time.sleep(3)
             time.sleep(3)
             
             # محاكاة خطأ الباسورد لو البيانات غير صحيحة للتجربة الحقيقية
