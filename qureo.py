@@ -1,19 +1,31 @@
 """
 ربط بوت الطلاب بمنصة Qureo و Sprix:
-يتحقق من رقم الدخول والباسورد عبر الـ API الفعلي ويرجع الصلاحيات والكورسات.
+يتحقق من رقم الدخول والباسورد مع ترويسات محاكية للمتصفح الحقيقي لتجاوز الحماية.
 """
 import os
+import logging
 import requests
+
+logger = logging.getLogger(__name__)
 
 MODE = os.getenv("QUREO_MODE", "demo").strip().lower()
 TIMEOUT = 15
 BASE = "https://me-portal.qureo.education"
+
+# ترويسات مطابقة تماماً لمتصفح هاتف محمول حقيقي لتجاوز حماية المنصة
 HEADERS = {
-    "Accept": "application/json, */*",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Content-Type": "application/json",
     "Origin": BASE,
     "Referer": BASE + "/login",
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
-    "Content-Type": "application/json"
+    "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="120"',
+    "Sec-Ch-Ua-Mobile": "?1",
+    "Sec-Ch-Ua-Platform": '"Android"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
 }
 
 class LoginFailed(Exception):
@@ -57,7 +69,6 @@ def _real(username, password, course_type="programming"):
     if not login_url or not progress_url:
         raise NotConfigured()
     
-    # مطابقة الحقول من صور HTTP Canary الخاصة بك
     user_f = os.getenv("QUREO_USER_FIELD", "student_id")
     pass_f = os.getenv("QUREO_PASS_FIELD", "password")
     ch_key = os.getenv("QUREO_CHAPTER_KEY", "").strip()
@@ -66,14 +77,22 @@ def _real(username, password, course_type="programming"):
     try:
         with requests.Session() as s:
             s.headers.update(HEADERS)
-            # طلب تسجيل الدخول POST مع student_id و password
+            
+            # إرسال طلب تسجيل الدخول
             r = s.post(login_url, json={user_f: username, pass_f: password},
                        timeout=TIMEOUT, allow_redirects=True)
+            
+            # تسجيل الحالة في اللوج لمعرفة سبب الرفض إن وجدت
+            logger.info("Qureo Login Status Code: %s", r.status_code)
+            
             if r.status_code in (400, 401, 403):
                 raise LoginFailed()
+            r.raise_for_status()
             
-            # جلب معلومات المستخدم وصلاحياته الكورسية من userinfo
+            # جلب معلومات المستخدم
             p = s.get(progress_url, timeout=TIMEOUT)
+            logger.info("Qureo Userinfo Status Code: %s", p.status_code)
+            
             if p.status_code in (401, 403):
                 raise LoginFailed()
             p.raise_for_status()
@@ -82,11 +101,10 @@ def _real(username, password, course_type="programming"):
         chapter = _opt(data, ch_key, str) or "متاح عبر المنصة"
         diamonds = _opt(data, dm_key, int)
         
-        # استخراج الصلاحيات والكورسات من استجابة permissions في الـ JSON
         perms = data.get("permissions") if isinstance(data, dict) else None
         courses = sorted({p for p in (perms or []) if isinstance(p, str) and not p.endswith("_trial")})
         if not courses and isinstance(perms, list):
-            courses = perms  # كاحتياطي لو لم تكن منتهية بـ _trial
+            courses = perms
 
         return {
             "chapter": chapter, 
@@ -98,7 +116,8 @@ def _real(username, password, course_type="programming"):
         }
     except LoginFailed:
         raise
-    except (requests.RequestException, KeyError, IndexError, ValueError, TypeError) as e:
+    except Exception as e:
+        logger.error("Qureo API Error Details: %s", type(e).__name__ + ": " + str(e))
         raise QureoUnavailable(type(e).__name__) from None
 
 def fetch_progress(username, password, course_type="programming"):
