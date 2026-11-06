@@ -1,13 +1,3 @@
-"""
-بوت الإدارة (خاص بك فقط).
-
-طرق إضافة الكتب:
-  1) أرسل له أي عدد من الملفات في الخاص (أو روابط، كل سطر: اسم | رابط).
-  2) أضفه لمجموعة وأرسل فيها /linkgroup، وكل ملف يُرسل في المجموعة يُضاف تلقائياً.
-
-لكل ملف يتعرف تلقائياً على: الاسم والصف والترم والمادة والمسار (من الاسم/الوصف).
-الملفات المكتملة تُحفظ مباشرة (دفعة واحدة)، وغير المكتملة تذهب لطابور المراجعة (/review).
-"""
 import html
 import logging
 import os
@@ -25,22 +15,14 @@ import detect
 import library
 
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN", "")
-# أرقام حسابات الأدمن على تليجرام، مفصولة بفاصلة. مثال: 123456789,987654321
 ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x.isdigit()}
-MAX_DOWNLOAD = 20 * 1024 * 1024  # حد تليجرام لتنزيل الملفات عبر البوت (يُستخدم فقط بدون قناة تخزين)
+MAX_DOWNLOAD = 20 * 1024 * 1024
 ALLOWED_EXT = {".pdf", ".doc", ".docx", ".ppt", ".pptx"}
 
-# فاصل بين كل نسخة وأخرى إلى قناة التخزين (تليجرام يحد عدد الرسائل في الدقيقة)
 COPY_DELAY = float(os.getenv("COPY_DELAY", "1.2"))
-# بعد كم ثانية سكون يعتبر البوت أن الدفعة انتهت ويحفظها ويرسل الملخص
 IDLE_FLUSH = float(os.getenv("IDLE_FLUSH", "5"))
-# أقصى عدد ملفات في ملخص/حفظة واحدة (لو أكثر تُقسم على أكثر من ملخص)
 FLUSH_SIZE = int(os.getenv("FLUSH_SIZE", "200"))
 
-# =========================
-# قفل الترم: لو اخترت ترم، كل الملفات (خاص + مجموعات مربوطة) تُحفظ بهذا الترم
-# بغض النظر عما في اسم الملف. القيمة None = تلقائي من اسم الملف.
-# =========================
 import json
 
 _SETTINGS_PATH = os.path.join(library.DATA_DIR, "admin_settings.json")
@@ -87,7 +69,6 @@ def term_lock_markup():
 
 
 def _parse_channel_id(raw):
-    """يقبل الرقم حتى لو انعكست علامة الناقص إلى آخره بسبب لوحة المفاتيح العربية."""
     raw = (raw or "").strip().replace("\u2212", "-").replace("\u2013", "-").replace(" ", "")
     if raw.endswith("-"):
         raw = "-" + raw[:-1]
@@ -98,7 +79,6 @@ def _parse_channel_id(raw):
         return 0
 
 
-# قناة تخزين خاصة (رقمها يبدأ بـ -100). مع وجودها تُقبل الملفات بأي حجم (حتى 2 جيجا)
 STORAGE_CHANNEL_ID = _parse_channel_id(os.getenv("STORAGE_CHANNEL_ID", ""))
 
 if not ADMIN_BOT_TOKEN:
@@ -107,11 +87,7 @@ if not ADMIN_BOT_TOKEN:
 bot = telebot.TeleBot(ADMIN_BOT_TOKEN, parse_mode="HTML")
 logger = logging.getLogger(__name__)
 
-# حالة الشاشة الحالية لكل أدمن: {admin_id: {...}}
-#   mode = "review": مراجعة ملف من الطابور
-#   mode = "bulk"  : وضع الإضافة الجماعية مع قيم افتراضية
 pending = {}
-# الدفعات الأخيرة للتراجع: {batch_id: [book ids]}
 batches = {}
 _last_ack = {}
 
@@ -142,7 +118,6 @@ def deny(message):
 
 
 def call_with_retry(fn, *args, **kwargs):
-    """ينفذ طلب تليجرام، وإذا رفض بسبب كثرة الطلبات (429) ينتظر المدة المطلوبة ويعيد المحاولة."""
     for attempt in range(4):
         try:
             return fn(*args, **kwargs)
@@ -159,12 +134,7 @@ def call_with_retry(fn, *args, **kwargs):
             raise
 
 
-# =========================
-# التعرف على الملف وتجهيز بياناته
-# =========================
-
 def make_item(message):
-    """يستخرج بيانات المستند من الرسالة، أو None إذا كان نوعه غير مدعوم."""
     doc = message.document
     name = doc.file_name or ""
     ext = os.path.splitext(name)[1].lower()
@@ -194,7 +164,6 @@ def make_link_item(title, url):
 
 
 def build_title(item, found):
-    """اسم الكتاب: الوصف (أول سطر) ثم اسم الملف بعد تنظيفه، وإذا كان بلا معنى يُولَّد من البيانات المتعرف عليها."""
     for raw in (item["caption"] or "").splitlines()[:1] + [item["file_name"] or ""]:
         title = detect.clean_title(raw)
         if title:
@@ -209,7 +178,6 @@ def build_title(item, found):
 
 
 def analyze(item, defaults=None):
-    """يتعرف على الصف والترم والمادة والمسار والاسم. القيم الافتراضية تُستخدم فقط لما لم يُتعرف عليه."""
     defaults = defaults or {}
     text = f"{item['caption']} {item['file_name'] or ''}"
     found = detect.detect(text, assume_grade=defaults.get("grade"))
@@ -217,7 +185,7 @@ def analyze(item, defaults=None):
         if found[key] is None:
             found[key] = defaults.get(key)
     if forced_term:
-        found["term"] = forced_term  # الترم الذي حدده الأدمن يتفوق على التعرف التلقائي
+        found["term"] = forced_term
     if found["track"] is None and found["grade"] in library.GRADE_TRACKS:
         default_track = defaults.get("track")
         if default_track in library.tracks_for_grade(found["grade"]):
@@ -235,11 +203,6 @@ def is_complete(info):
 
 
 def store_file(info):
-    """
-    يحفظ الملف فعلياً:
-      - مع قناة التخزين: ننسخ الرسالة إلى القناة (بدون تنزيل، لذلك لا يوجد حد للحجم)
-      - بدونها: ننزل الملف محلياً (حد 20 ميجا)
-    """
     if info.get("type") == "link":
         return {"channel_id": None, "message_id": None, "file_name": None}
     if STORAGE_CHANNEL_ID:
@@ -277,7 +240,6 @@ def book_fields(info, stored):
 
 
 def purge_channel(books):
-    """يحذف رسائل الكتب المحذوفة من قناة التخزين."""
     for b in books:
         if b.get("channel_id") and b.get("message_id"):
             try:
@@ -296,21 +258,15 @@ def notify_admins(text, skip_chat=None):
             logger.info("Could not notify admin %s: %s", aid, e)
 
 
-# =========================
-# معالج الدفعات (يعمل في خيط مستقل)
-# كل ملف يصل (من الخاص أو المجموعة) يدخل الطابور، والخيط يعالجه بهدوء ثم
-# يحفظ الجميع بعملية واحدة ويرسل ملخصاً واحداً.
-# =========================
-
 jobs = queue.Queue()
 
 
 class Report:
     def __init__(self):
-        self.ok = []       # حقول جاهزة لـ library.add_many
+        self.ok = []
         self.dup = 0
         self.review = 0
-        self.fail = []     # (الاسم، السبب)
+        self.fail = []
 
 
 def _fail_reason(exc):
@@ -424,7 +380,6 @@ def enqueue(item, chat_id, defaults=None):
 
 
 def ack_receive(chat_id):
-    """رسالة استلام واحدة لكل دفعة (لا نرسلها لكل ملف)."""
     now = time.time()
     if now - _last_ack.get(chat_id, 0) > 15:
         bot.send_message(
@@ -441,10 +396,6 @@ def bulk_defaults(uid):
         return {k: st.get(k) for k in ("grade", "term", "subject", "track")}
     return None
 
-
-# =========================
-# شاشة المراجعة / الإعدادات
-# =========================
 
 def _grade_text(st):
     return library.GRADES.get(st.get("grade")) or "❓ غير محدد"
@@ -526,10 +477,6 @@ def next_review(chat_id, uid):
     pending[uid] = item
     show_summary(chat_id, uid)
 
-
-# =========================
-# الأوامر
-# =========================
 
 @bot.message_handler(commands=["start", "help"], func=_is_private)
 def start(message):
@@ -621,7 +568,6 @@ def list_books(message):
 
 @bot.message_handler(commands=["linkgroup"], func=_is_group)
 def link_group(message):
-    # يجب أن يرسلها أدمن البوت (وليس كمشرف مجهول) حتى يتحقق البوت من هويته
     if not message.from_user or not is_admin(message.from_user.id):
         return
     library.link_group(message.chat.id)
@@ -640,13 +586,8 @@ def unlink_group(message):
     bot.send_message(message.chat.id, "تم إلغاء الربط." if ok else "هذه المجموعة غير مربوطة.")
 
 
-# =========================
-# استقبال الملفات والنصوص
-# =========================
-
 @bot.message_handler(content_types=["document"], func=_is_group)
 def on_group_document(message):
-    """ملف في مجموعة مربوطة: يُضاف تلقائياً، ويُرسل الملخص في المجموعة."""
     if not library.is_linked_group(message.chat.id):
         return
     item = make_item(message)
@@ -688,7 +629,6 @@ def on_text(message):
     text = message.text.strip()
     state = pending.get(uid)
 
-    # لمعرفة رقم القناة: حوّل أي رسالة من القناة إلى هذا البوت
     fwd = getattr(message, "forward_from_chat", None)
     if fwd is None:
         fwd = getattr(getattr(message, "forward_origin", None), "chat", None)
@@ -698,7 +638,6 @@ def on_text(message):
             f"🆔 رقم القناة: <code>{fwd.id}</code>\nضعه في متغير STORAGE_CHANNEL_ID على Railway.",
         )
 
-    # انتظار نص: مادة جديدة أو اسم جديد
     if state and state.get("await") == "subject":
         state["subject"] = text
         state.pop("await")
@@ -708,7 +647,6 @@ def on_text(message):
         state.pop("await")
         return show_summary(message.chat.id, uid)
 
-    # روابط: كل سطر "العنوان | الرابط"
     links = parse_links(text)
     if links:
         ack_receive(message.chat.id)
@@ -722,10 +660,6 @@ def on_text(message):
         "أرسل ملفات PDF (أي عدد) أو روابط بالشكل: <code>اسم الكتاب | https://...</code>",
     )
 
-
-# =========================
-# الحفظ بعد المراجعة اليدوية
-# =========================
 
 def finish(chat_id, uid):
     state = pending.pop(uid, None)
@@ -753,10 +687,6 @@ def finish(chat_id, uid):
     if library.review_size():
         next_review(chat_id, uid)
 
-
-# =========================
-# الأزرار
-# =========================
 
 @bot.callback_query_handler(func=lambda call: True)
 def on_callback(call):
@@ -804,7 +734,7 @@ def on_callback(call):
     if data == "rv":
         bot.answer_callback_query(call.id)
         try:
-            return next_review(uid, uid)  # المراجعة تتم دائماً في الخاص
+            return next_review(uid, uid)
         except Exception:
             return bot.send_message(chat_id, "افتح محادثة البوت الخاصة وأرسل /review")
 
@@ -838,7 +768,7 @@ def on_callback(call):
 
     bot.answer_callback_query(call.id)
 
-    if data == "eg":  # اختيار الصف
+    if data == "eg":
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(*[
             InlineKeyboardButton(name, callback_data=f"xg:{key}")
@@ -851,10 +781,10 @@ def on_callback(call):
         if key in library.GRADES:
             state["grade"] = key
             if state.get("track") not in library.tracks_for_grade(key):
-                state["track"] = None  # المسار القديم لا يناسب الصف الجديد
+                state["track"] = None
         show_summary(chat_id, uid, msg_id)
 
-    elif data == "etk":  # اختيار المسار
+    elif data == "etk":
         tracks = library.tracks_for_grade(state.get("grade"))
         if not tracks:
             return show_summary(chat_id, uid, msg_id)
@@ -874,7 +804,7 @@ def on_callback(call):
             state["track"] = key
         show_summary(chat_id, uid, msg_id)
 
-    elif data == "et":  # اختيار الترم
+    elif data == "et":
         markup = InlineKeyboardMarkup(row_width=1)
         for key in (1, 2, 0):
             markup.add(InlineKeyboardButton(library.TERMS[key], callback_data=f"xt:{key}"))
@@ -886,7 +816,7 @@ def on_callback(call):
             state["term"] = key
         show_summary(chat_id, uid, msg_id)
 
-    elif data == "es":  # اختيار المادة
+    elif data == "es":
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(*[
             InlineKeyboardButton(name, callback_data=f"xs:{i}")
@@ -908,3 +838,8 @@ def on_callback(call):
     elif data == "en":
         state["await"] = "title"
         bot.edit_message_text("✏️ اكتب اسم الكتاب الجديد:", chat_id, msg_id)
+
+
+if __name__ == "__main__":
+    logger.info("Admin bot is starting up...")
+    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
