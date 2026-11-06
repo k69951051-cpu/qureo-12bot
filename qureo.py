@@ -14,54 +14,55 @@ def solve_qureo_automatically(username, password, chapter_id="all", progress_cal
     if progress_callback:
         progress_callback("🚀 <b>جاري تهيئة النظام...</b>\n[░░░░░░░░░░] 10%")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-accelerated-2d-canvas",
-                "--no-first-run",
-                "--no-zygote",
-                "--single-process",
-                "--disable-gpu"
-            ]
-        )
-        page = browser.new_page()
-        
-        try:
+    try:
+        with sync_playwright() as p:
             if progress_callback:
-                progress_callback("🌐 <b>جاري فتح موقع المنصة...</b>\n[███░░░░░░░] 30%")
+                progress_callback("🌐 <b>جاري تشغيل المتصفح في الخلفية...</b>\n[██░░░░░░░░] 25%")
+            
+            # محاولة إطلاق المتصفح بالخلافة مع خيارات الأمان السحابية
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu"
+                ]
+            )
+            page = browser.new_page()
+            
+            if progress_callback:
+                progress_callback("🌍 <b>جاري الانتقال لموقع المنصة...</b>\n[█████░░░░░] 50%")
 
             page.goto("https://me-portal.qureo.education/", timeout=30000)
             
             if progress_callback:
-                progress_callback("🔑 <b>جاري كتابة بيانات الدخول...</b>\n[██████░░░░] 60%")
+                progress_callback("🔑 <b>جاري إدخال البيانات وتسجيل الدخول...</b>\n[████████░░] 80%")
 
             page.fill("input[name='username']", username)
             page.fill("input[name='password']", password)
             page.click("button[type='submit']")
             
-            if progress_callback:
-                progress_callback("⏳ <b>جاري تسجيل الدخول وتحميل الصفحة...</b>\n[████████░░] 85%")
-
             page.wait_for_load_state("networkidle")
             
             if "login" in page.url or page.locator(".error-message").is_visible():
                 raise LoginFailed("اسم المستخدم أو كلمة المرور غير صحيحة.")
             
             if progress_callback:
-                progress_callback("✅ <b>اكتملت العملية بنجاح!</b>\n[██████████] 100%")
+                progress_callback("✅ <b>تمت العملية بنجاح!</b>\n[██████████] 100%")
 
             browser.close()
-            return {"status": "success", "message": "تم الدخول والحل بنجاح"}
+            return {"status": "success", "message": "تم الدخول بنجاح"}
             
         except Exception as e:
-            browser.close()
+            if 'browser' in locals() and browser:
+                try:
+                    browser.close()
+                except:
+                    pass
             if isinstance(e, LoginFailed):
                 raise e
-            raise QureoUnavailable(str(e))
+            raise QureoUnavailable(f"خطأ تقني: {str(e)}")
 
 def fetch_progress(username, password):
     if not username or not password:
