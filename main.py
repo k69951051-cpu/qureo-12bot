@@ -12,7 +12,7 @@ from telebot import types
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-if not BOT_TOKEN:
+if not BOT_TOKEN:"9150114718:AAHwz8AxdEp_APewCSDy3zoxoB8vkdEHJdc"
     raise RuntimeError("Missing BOT_TOKEN environment variable")
 
 logging.basicConfig(
