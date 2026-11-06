@@ -1,6 +1,6 @@
 """
 ملف bot.py الشامل والمحدث للبوت
-يحتوي على: التدفق التفاعلي لمنصات Qureo و Sprix، مكتبة الكتب، الأسئلة التفاعلية، والاشتراك الإجباري.
+يحتوي على: التدفق التفاعلي لمنصات Qureo و Sprix، مكتبة الكتب، الأسئلة التفاعلية، والاشتراك الإجباري المستثنى منه خطوات المنصة.
 """
 import html
 import os
@@ -17,7 +17,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 # =========================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-MAX_WRONG = 3  # بعد 3 محاولات خاطئة يظهر الحل مع الشرح
+MAX_WRONG = 3
 OWNER_TELEGRAM = os.getenv("OWNER_TELEGRAM", "keroo_cr7").lstrip("@")
 OWNER_WHATSAPP = os.getenv("OWNER_WHATSAPP", "01203423169")
 
@@ -67,26 +67,6 @@ COURSES = {
                             "القيمة الموضوعة بين علامتي اقتباس تُعتبر نصاً (str) حتى لو كانت رقماً.",
                         ],
                         "explain": "<code>x</code> من النوع int و<code>y</code> من النوع str، فالنوعان مختلفان والنتيجة False.",
-                    },
-                ],
-            },
-        ],
-    },
-    "js": {
-        "name": "🟨 JavaScript",
-        "chapters": [
-            {
-                "title": "المتغيرات والأنواع",
-                "questions": [
-                    {
-                        "q": "أي كلمة تُستخدم لتعريف ثابت لا يمكن إعادة إسناده؟",
-                        "options": ["var", "let", "const", "static"],
-                        "answer": 2,
-                        "hints": [
-                            "الكلمة مأخوذة من constant.",
-                            "<code>let</code> و<code>var</code> يسمحان بتغيير القيمة لاحقاً.",
-                        ],
-                        "explain": "<code>const</code> تعرّف متغيراً لا يمكن إعادة إسناد قيمة جديدة له.",
                     },
                 ],
             },
@@ -195,13 +175,19 @@ def subject_books_view(grade, term, track, idx):
     return "\n".join(lines), markup
 
 # =========================
-# FORCED SUBSCRIPTION
+# FORCED SUBSCRIPTION (المستثنى منها خطوات المنصة)
 # =========================
 
 _sub_ok = {}
 
 class SubscriptionCheckError(Exception):
     pass
+
+def needs_subscription(data):
+    # استثناء جميع خطوات وأزرار منصة Qureo و Sprix والقوائم الرئيسية من فحص الاشتراك لتجنب التوقف
+    if data in ("contact", "menu", "qr", "qx", "qr_start_action") or data.startswith(("qr", "qrs", "qred", "qrc")):
+        return False
+    return True
 
 def is_subscribed(user_id, fresh=False):
     if not REQUIRED_CHANNEL:
@@ -253,9 +239,6 @@ def join_markup(error=False):
     )
     return markup
 
-def needs_subscription(data):
-    return data != "contact"
-
 def gate_message(message):
     user = message.from_user
     if not user:
@@ -271,7 +254,7 @@ def gate_message(message):
     return True
 
 # =========================
-# QUREO / SPRIX WIZARD MENUS (مطابق للفيديو)
+# QUREO / SPRIX WIZARD MENUS
 # =========================
 
 def qureo_grade_menu():
@@ -384,64 +367,14 @@ def show(chat_id, message_id, text, markup=None):
         logger.info("edit failed, sending new message: %s", e)
     bot.send_message(chat_id, text, reply_markup=markup)
 
-def current_question(st):
-    chapter = COURSES[st["course"]]["chapters"][st["chapter"]]
-    return chapter, chapter["questions"][st["q"]]
-
 def courses_menu():
     markup = InlineKeyboardMarkup(row_width=1)
-    for key, course in COURSES.items():
-        markup.add(InlineKeyboardButton(course["name"], callback_data=f"c:{key}"))
     markup.add(
+        InlineKeyboardButton("💻 منصة Qureo / Sprix", callback_data="qr"),
         InlineKeyboardButton("📚 مكتبة الكتب", callback_data="lib"),
-        InlineKeyboardButton("💻 منصة Qureo للبرمجة", callback_data="qr"),
         InlineKeyboardButton("📞 تواصل مع المالك", callback_data="contact"),
     )
     return markup
-
-def question_markup(st):
-    _, q = current_question(st)
-    markup = InlineKeyboardMarkup(row_width=2)
-    buttons = [
-        InlineKeyboardButton(opt, callback_data=f"a:{i}")
-        for i, opt in enumerate(q["options"])
-        if i not in st["wrong"]
-    ]
-    markup.add(*buttons)
-    row = []
-    if st["hints_used"] < len(q["hints"]):
-        row.append(InlineKeyboardButton("💡 تلميح", callback_data="hint"))
-    row.append(InlineKeyboardButton("🏠 القائمة", callback_data="menu"))
-    markup.add(*row)
-    return markup
-
-def next_markup(last):
-    markup = InlineKeyboardMarkup(row_width=1)
-    if last:
-        markup.add(InlineKeyboardButton("🏁 عرض نتيجتي", callback_data="next"))
-    else:
-        markup.add(InlineKeyboardButton("➡️ السؤال التالي", callback_data="next"))
-    markup.add(InlineKeyboardButton("🏠 القائمة", callback_data="menu"))
-    return markup
-
-def question_text(st, extra=""):
-    chapter, q = current_question(st)
-    total = len(chapter["questions"])
-    text = (
-        f"📘 <b>{chapter['title']}</b>\n"
-        f"❓ السؤال {st['q'] + 1} من {total}\n\n"
-        f"{q['q']}"
-    )
-    if extra:
-        text += f"\n\n{extra}"
-    return text
-
-def show_question(chat_id, message_id, extra=""):
-    st = get_state(chat_id)
-    st["wrong"] = []
-    st["hints_used"] = 0
-    st["finished_q"] = False
-    show(chat_id, message_id, question_text(st, extra), question_markup(st))
 
 # =========================
 # HANDLERS & WIZARD TEXT HANDLER
@@ -462,12 +395,11 @@ def start(message):
         return
     bot.send_message(
         chat_id,
-        "👋 <b>مرحباً بك في مساعد التعلم</b>\n\n"
-        "هنا تتدرب على Python و JavaScript، وتتابع منصات Qureo و Sprix بسهولة.\n\n"
-        "📚 اختر:",
+        "👋 <b>مرحباً بك في مساعد التعلم والمنصات</b>\n\n"
+        "اختر القسم المطلوب من الأزرار بالأسفل 👇",
         reply_markup=courses_menu(),
     )
-    bot.send_message(chat_id, "استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=main_keyboard())
+    bot.send_message(chat_id, "استخدم الأزرار للتنقل السريع 👇", reply_markup=main_keyboard())
 
 @bot.message_handler(commands=["contact"])
 def contact(message):
@@ -503,7 +435,7 @@ def handle_qureo_wizard_text(message):
             f"🔑 كلمة المرور: <code>••••••••</code>\n"
             f"📚 الكورس: <b>{'الثقافة المالية' if st.get('course_type') == 'financial' else 'البرمجة'}</b>\n"
             f"🎯 المطلوب: <b>{st.get('scope', 'كل الفصول')}</b>\n\n"
-            "يمكنك متابعة التعليمات، سأقوم بالتنفيذ فور الضغط على ابدأ."
+            "اضغط على (ابدأ) لتنفيذ المطلوب عبر المنصة."
         )
         bot.send_message(chat_id, summary, reply_markup=qureo_confirm_menu())
         return True
@@ -519,15 +451,12 @@ def fallback(message):
     
     if txt in ("📊 التقدم", "🏫 البوابة", "📚 المكتبة", "❌ إلغاء"):
         qureo_wizard.pop(chat_id, None)
-        if txt == "📊 التقدم":
+        if txt in ("📊 التقدم", "🏫 البوابة"):
             return bot.send_message(chat_id, "💻 <b>منصة Qureo / Sprix</b>\n\nاختر صفك:", reply_markup=qureo_grade_menu())
-        if txt == "🏫 البوابة":
-            return bot.send_message(chat_id, "📚 اختر الكورس:", reply_markup=courses_menu())
         if txt == "📚 المكتبة":
             return bot.send_message(chat_id, "📚 <b>مكتبة الكتب</b>\n\nاختر المرحلة أو القسم:", reply_markup=library_home())
         return bot.send_message(chat_id, "تم الإلغاء.")
     
-    # معالجة خطوات الـ Wizard الخاصة بـ Qureo
     if handle_qureo_wizard_text(message):
         return
         
@@ -538,9 +467,8 @@ def handle_callbacks(call):
     chat_id = call.message.chat.id
     msg_id = call.message.message_id
     data = call.data
-    st = get_state(chat_id)
 
-    if data == "chk" or needs_subscription(data):
+    if needs_subscription(data):
         try:
             subscribed = is_subscribed(call.from_user.id, fresh=data == "chk" or data.startswith("f:"))
         except SubscriptionCheckError:
@@ -553,7 +481,7 @@ def handle_callbacks(call):
             return show(chat_id, msg_id, join_text(), join_markup())
         if data == "chk":
             bot.answer_callback_query(call.id, "✅ تم التحقق، أهلاً بك!")
-            return show(chat_id, msg_id, "📚 اختر الكورس:", courses_menu())
+            return show(chat_id, msg_id, "📚 القائمة الرئيسية:", courses_menu())
 
     bot.answer_callback_query(call.id)
 
@@ -618,12 +546,12 @@ def handle_callbacks(call):
 
     elif data == "qr":
         qureo_wizard.pop(chat_id, None)
-        show(chat_id, msg_id, "💻 <b>منصة Qureo للبرمجة</b>\n\nاختر صفك:", qureo_grade_menu())
+        show(chat_id, msg_id, "💻 <b>منصة Qureo / Sprix</b>\n\nاختر صفك:", qureo_grade_menu())
 
     elif data == "menu":
         users[chat_id] = new_state()
         qureo_wizard.pop(chat_id, None)
-        show(chat_id, msg_id, "📚 اختر الكورس:", courses_menu())
+        show(chat_id, msg_id, "📚 القائمة الرئيسية:", courses_menu())
 
     elif data == "contact":
         show(chat_id, msg_id, contact_text(), contact_markup())
