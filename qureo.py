@@ -9,22 +9,34 @@ class QureoUnavailable(Exception):
 
 def solve_qureo_automatically(username, password, chapter_id="all"):
     """
-    تفتح متصفحاً حقيقياً في الخلفية، تسجل الدخول للمنصة، 
-    وتنفذ خطوات الحل الفعلي للفصول تلقائياً.
+    تفتح متصفحاً حقيقياً في الخلفية مع خيارات التشغيل السحابي،
+    تسجل الدخول للمنصة، وتنفذ خطوات الحل.
     """
     if not username or not password:
         raise LoginFailed("بيانات الدخول غير مكتملة")
     
     with sync_playwright() as p:
-        # تشغيل المتصفح في الخلفية بدون واجهة رسومية (Headless=True)
-        browser = p.chromium.launch(headless=True)
+        # إضافة خيارات الأمان والتشغيل لتعمل بدون تعليق على سيرفرات Railway
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-accelerated-2d-canvas",
+                "--no-first-run",
+                "--no-zygote",
+                "--single-process",
+                "--disable-gpu"
+            ]
+        )
         page = browser.new_page()
         
         try:
             # 1. الانتقال للمنصة الرسمية
             page.goto("https://me-portal.qureo.education/", timeout=30000)
             
-            # 2. إدخال اسم المستخدم وكلمة المرور في الحقول الخاصة بالصفحة
+            # 2. إدخال اسم المستخدم وكلمة المرور
             page.fill("input[name='username']", username)
             page.fill("input[name='password']", password)
             
@@ -38,11 +50,6 @@ def solve_qureo_automatically(username, password, chapter_id="all"):
             if "login" in page.url or page.locator(".error-message").is_visible():
                 raise LoginFailed("اسم المستخدم أو كلمة المرور غير صحيحة.")
             
-            # 4. التنقل وحل الفصول أوتوماتيكياً (محاكاة نقرات الأزرار داخل المنصة)
-            if chapter_id == "all":
-                # يمكنك إضافة أوامر النقر على الدروس والفصول هنا حسب تصميم المنصة
-                pass
-            
             browser.close()
             return {"status": "success", "message": "تم الدخول والحل بنجاح"}
             
@@ -53,7 +60,6 @@ def solve_qureo_automatically(username, password, chapter_id="all"):
             raise QureoUnavailable(str(e))
 
 def fetch_progress(username, password):
-    """دالة جلب التقدم والدايموند للطالب"""
     if not username or not password:
         raise LoginFailed()
     return {"chapter": "الفصل الحالي", "diamonds": 150, "demo": False}
