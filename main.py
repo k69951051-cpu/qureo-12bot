@@ -10,7 +10,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # CONFIG
 # =========================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = "9150114718:AAHwz8AxdEp_APewCSDy3zoxoB8vkdEHJdc"
 QUREO_BEARER_TOKEN = os.getenv("QUREO_BEARER_TOKEN", "")
 
 BASE_URL = "https://me-tp.qureo.education"
