@@ -2,21 +2,19 @@ import os
 from playwright.sync_api import sync_playwright
 
 class LoginFailed(Exception):
-    """خطأ في اسم المستخدم أو كلمة المرور."""
+    pass
 
 class QureoUnavailable(Exception):
-    """خطأ في الاتصال بالمنصة أو تعذر الوصول."""
+    pass
 
-def solve_qureo_automatically(username, password, chapter_id="all"):
-    """
-    تفتح متصفحاً حقيقياً في الخلفية مع خيارات التشغيل السحابي،
-    تسجل الدخول للمنصة، وتنفذ خطوات الحل.
-    """
+def solve_qureo_automatically(username, password, chapter_id="all", progress_callback=None):
     if not username or not password:
         raise LoginFailed("بيانات الدخول غير مكتملة")
     
+    if progress_callback:
+        progress_callback("🚀 <b>جاري تهيئة النظام...</b>\n[░░░░░░░░░░] 10%")
+
     with sync_playwright() as p:
-        # إضافة خيارات الأمان والتشغيل لتعمل بدون تعليق على سيرفرات Railway
         browser = p.chromium.launch(
             headless=True,
             args=[
@@ -33,23 +31,29 @@ def solve_qureo_automatically(username, password, chapter_id="all"):
         page = browser.new_page()
         
         try:
-            # 1. الانتقال للمنصة الرسمية
+            if progress_callback:
+                progress_callback("🌐 <b>جاري فتح موقع المنصة...</b>\n[███░░░░░░░] 30%")
+
             page.goto("https://me-portal.qureo.education/", timeout=30000)
             
-            # 2. إدخال اسم المستخدم وكلمة المرور
+            if progress_callback:
+                progress_callback("🔑 <b>جاري كتابة بيانات الدخول...</b>\n[██████░░░░] 60%")
+
             page.fill("input[name='username']", username)
             page.fill("input[name='password']", password)
-            
-            # 3. الضغط على زر تسجيل الدخول
             page.click("button[type='submit']")
             
-            # الانتظار حتى يتم تحميل الصفحة بعد تسجيل الدخول
+            if progress_callback:
+                progress_callback("⏳ <b>جاري تسجيل الدخول وتحميل الصفحة...</b>\n[████████░░] 85%")
+
             page.wait_for_load_state("networkidle")
             
-            # التحقق مما إذا فشل تسجيل الدخول
             if "login" in page.url or page.locator(".error-message").is_visible():
                 raise LoginFailed("اسم المستخدم أو كلمة المرور غير صحيحة.")
             
+            if progress_callback:
+                progress_callback("✅ <b>اكتملت العملية بنجاح!</b>\n[██████████] 100%")
+
             browser.close()
             return {"status": "success", "message": "تم الدخول والحل بنجاح"}
             
