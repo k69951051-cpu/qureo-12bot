@@ -127,12 +127,7 @@ def handle_actions(call):
         driver = webdriver.Chrome(service=service, options=options)
         driver.get("https://p.qureo.education/") # (أو رابط المنصة الخاص بك)
         time.sleep(3)
-            
-            # محاكاة خطأ الباسورد لو البيانات غير صحيحة للتجربة الحقيقية
-            if password == "wrong": # يمكنك تعديلها أو اختبارها
-                bot.send_message(chat_id, "❌ **خطأ في تسجيل الدخول!**\nكلمة المرور أو رقم الدخول غير صحيح.")
-                return
-            
+        
             # هنا يتم جلب الأرقام الحقيقية من المنصة بعد نجاح الدخول
             real_diamonds = "230 / 270"
             real_chapters = "46 / 54"
