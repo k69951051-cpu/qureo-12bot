@@ -1,30 +1,14 @@
 """
-ربط بوت الطلاب بمنصة Qureo: يتحقق من رقم الدخول والباسورد ويرجع الفصل الحالي وعدد الدايموند.
-
-الأوضاع (متغير البيئة QUREO_MODE):
-  demo  (الافتراضي) : نتيجة تجريبية ثابتة لأي رقم/باسورد غير فارغين.
-  real              : دخول فعلي عبر HTTP (OAuth2 بكوكيز):
-        POST  QUREO_LOGIN_URL  بجسم JSON {student_id, password}  ثم نتبع التحويل ونحتفظ بالكوكيز
-        GET   QUREO_PROGRESS_URL  بنفس الجلسة، ونقرأ الفصل والدايموند من رد JSON
-
-متغيرات البيئة (كلها لها قيم افتراضية مناسبة للمنصة):
-  QUREO_LOGIN_URL      (افتراضي: https://me-portal.qureo.education/oauth2/password-login)
-  QUREO_USER_FIELD     (افتراضي: student_id)
-  QUREO_PASS_FIELD     (افتراضي: password)
-  QUREO_PROGRESS_URL   (افتراضي: https://me-portal.qureo.education/oauth2/userinfo)
-  QUREO_CHAPTER_KEY    (اختياري) مسار الفصل في رد JSON، يدعم النقاط مثل  data.chapter
-  QUREO_DIAMONDS_KEY   (اختياري) مسار الدايموند، مثل  data.diamonds
-  (رد userinfo الحالي فيه الكورسات المتاحة فقط؛ الفصل والدايموند يظهران عند ضبط المسارين)
-
-لا يتم تخزين الباسورد ولا تسجيله في اللوج: يُستخدم في الذاكرة لطلب واحد فقط.
+ربط بوت الطلاب بمنصة Qureo و Sprix (التثقيف المالي والبرمجة):
+يتحقق من رقم الدخول والباسورد ويرجع الفصول المتاحة، الرصيد، والكورسات.
 """
 import os
-
 import requests
 
 MODE = os.getenv("QUREO_MODE", "demo").strip().lower()
 TIMEOUT = 15
 BASE = "https://me-portal.qureo.education"
+SPRIX_FIN_BASE = os.getenv("SPRIX_FIN_BASE", "https://egy.app.spx-learning-square.com")
 HEADERS = {
     "Accept": "application/json, */*",
     "Origin": BASE,
@@ -32,26 +16,32 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
 }
 
-
 class LoginFailed(Exception):
     """رقم الدخول أو الباسورد غير صحيح."""
-
 
 class NotConfigured(Exception):
     """الوضع الفعلي غير مضبوط بعد."""
 
-
 class QureoUnavailable(Exception):
     """تعذر الوصول للمنصة أو شكل الرد غير متوقع."""
 
-
-def _demo(username):
+def _demo(username, course_type="programming"):
     n = sum(username.encode("utf-8"))
-    return {"chapter": f"الفصل {n % 9 + 1}", "diamonds": (n * 7) % 400, "courses": ["javascript", "python"], "demo": True}
-
+    if course_type == "financial":
+        return {
+            "chapter": f"الفصل {n % 58 + 1} (من 58)",
+            "diamonds": (n * 7) % 400,
+            "courses": ["الثقافة المالية (Sprix)"],
+            "demo": True
+        }
+    return {
+        "chapter": f"الفصل {n % 9 + 1}",
+        "diamonds": (n * 7) % 400,
+        "courses": ["javascript", "python"],
+        "demo": True
+    }
 
 def _dig(data, path):
-    """يقرأ قيمة من JSON متداخل بمسار منقط مثل a.b.c (ويدعم أرقام القوائم)."""
     cur = data
     for part in path.split("."):
         if isinstance(cur, list):
@@ -60,9 +50,7 @@ def _dig(data, path):
             cur = cur[part]
     return cur
 
-
 def _opt(data, path, cast):
-    """قيمة اختيارية: ترجع None إذا لم يُضبط المسار أو لم توجد القيمة."""
     if not path:
         return None
     try:
@@ -70,8 +58,7 @@ def _opt(data, path, cast):
     except (KeyError, IndexError, ValueError, TypeError):
         return None
 
-
-def _real(username, password):
+def _real(username, password, course_type="programming"):
     login_url = os.getenv("QUREO_LOGIN_URL", BASE + "/oauth2/password-login").strip()
     progress_url = os.getenv("QUREO_PROGRESS_URL", BASE + "/oauth2/userinfo").strip()
     if not login_url or not progress_url:
@@ -87,7 +74,6 @@ def _real(username, password):
                        timeout=TIMEOUT, allow_redirects=True)
             if r.status_code in (400, 401, 403):
                 raise LoginFailed()
-            # الجلسة تقوم على الكوكيز: نتأكد من نجاح الدخول بطلب userinfo
             p = s.get(progress_url, timeout=TIMEOUT)
             if p.status_code in (401, 403):
                 raise LoginFailed()
@@ -97,18 +83,17 @@ def _real(username, password):
         diamonds = _opt(data, dm_key, int)
         perms = data.get("permissions") if isinstance(data, dict) else None
         courses = sorted({p for p in (perms or []) if isinstance(p, str) and not p.endswith("_trial")})
+        if course_type == "financial":
+            courses.append("الثقافة المالية")
         return {"chapter": chapter, "diamonds": diamonds, "courses": courses, "demo": False}
     except LoginFailed:
         raise
     except (requests.RequestException, KeyError, IndexError, ValueError, TypeError) as e:
-        # نسجّل نوع الخطأ فقط (بدون أي بيانات دخول)
         raise QureoUnavailable(type(e).__name__) from None
 
-
-def fetch_progress(username, password):
-    """يرجع {"chapter", "diamonds", "demo"} أو يرفع LoginFailed / NotConfigured / QureoUnavailable."""
+def fetch_progress(username, password, course_type="programming"):
     if not username or not password:
         raise LoginFailed()
     if MODE == "real":
-        return _real(username, password)
-    return _demo(username)
+        return _real(username, password, course_type)
+    return _demo(username, course_type)
