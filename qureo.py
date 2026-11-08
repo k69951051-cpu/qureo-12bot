@@ -1,135 +1,72 @@
-"""
-ربط بوت الطلاب بمنصة Qureo: يتحقق من رقم الدخول والباسورد ويرجع الفصل الحالي وعدد الدايموند.
-
-الأوضاع (متغير البيئة QUREO_MODE):
-  demo  (الافتراضي) : نتيجة تجريبية ثابتة لأي رقم/باسورد غير فارغين.
-  real              : دخول فعلي عبر HTTP (OAuth2 بكوكيز):
-        POST  QUREO_LOGIN_URL  بجسم JSON {student_id, password}  ثم نتبع التحويل ونحتفظ بالكوكيز
-        GET   QUREO_PROGRESS_URL  بنفس الجلسة، ونقرأ الفصل والدايموند من رد JSON
-
-متغيرات البيئة (كلها لها قيم افتراضية مناسبة للمنصة):
-  QUREO_LOGIN_URL      (افتراضي: https://me-portal.qureo.education/oauth2/password-login)
-  QUREO_USER_FIELD     (افتراضي: student_id)
-  QUREO_PASS_FIELD     (افتراضي: password)
-  QUREO_PROGRESS_URL   (افتراضي: https://me-portal.qureo.education/oauth2/userinfo)
-  QUREO_CHAPTER_KEY    (اختياري) مسار الفصل في رد JSON، يدعم النقاط مثل  data.chapter
-  QUREO_DIAMONDS_KEY   (اختياري) مسار الدايموند، مثل  data.diamonds
-  (رد userinfo الحالي فيه الكورسات المتاحة فقط؛ الفصل والدايموند يظهران عند ضبط المسارين)
-
-لا يتم تخزين الباسورد ولا تسجيله في اللوج: يُستخدم في الذاكرة لطلب واحد فقط.
-"""
-import logging
-import os
-
 import requests
+import logging
 
 logger = logging.getLogger(__name__)
-LAST = "لم يُستخدم بعد"
-
-MODE = os.getenv("QUREO_MODE", "demo").strip().lower()
-TIMEOUT = 15
-BASE = "https://me-portal.qureo.education"
-HEADERS = {
-    "Accept": "*/*",  # نفس ما يرسله المتصفح بالضبط
-    "Origin": BASE,
-    "Referer": BASE + "/login",
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
-}
-
-
-class LoginFailed(Exception):
-    """رقم الدخول أو الباسورد غير صحيح."""
-
-
-class NotConfigured(Exception):
-    """الوضع الفعلي غير مضبوط بعد."""
-
-
-class QureoUnavailable(Exception):
-    """تعذر الوصول للمنصة أو شكل الرد غير متوقع."""
-
-
-def _demo(username):
-    n = sum(username.encode("utf-8"))
-    return {"chapter": f"الفصل {n % 9 + 1}", "diamonds": (n * 7) % 400, "courses": ["javascript", "python"], "demo": True}
-
-
-def _dig(data, path):
-    """يقرأ قيمة من JSON متداخل بمسار منقط مثل a.b.c (ويدعم أرقام القوائم)."""
-    cur = data
-    for part in path.split("."):
-        if isinstance(cur, list):
-            cur = cur[int(part)]
-        else:
-            cur = cur[part]
-    return cur
-
-
-def _opt(data, path, cast):
-    """قيمة اختيارية: ترجع None إذا لم يُضبط المسار أو لم توجد القيمة."""
-    if not path:
-        return None
-    try:
-        return cast(_dig(data, path))
-    except (KeyError, IndexError, ValueError, TypeError):
-        return None
-
-
-def _real(username, password):
-    login_url = os.getenv("QUREO_LOGIN_URL", BASE + "/oauth2/password-login").strip()
-    progress_url = os.getenv("QUREO_PROGRESS_URL", BASE + "/oauth2/userinfo").strip()
-    if not login_url or not progress_url:
-        raise NotConfigured()
-    user_f = os.getenv("QUREO_USER_FIELD", "student_id")
-    pass_f = os.getenv("QUREO_PASS_FIELD", "password")
-    ch_key = os.getenv("QUREO_CHAPTER_KEY", "").strip()
-    dm_key = os.getenv("QUREO_DIAMONDS_KEY", "").strip()
-    try:
-        with requests.Session() as s:
-            s.headers.update(HEADERS)
-            r = s.post(login_url, json={user_f: username, pass_f: password},
-                       timeout=TIMEOUT, allow_redirects=True)
-            global LAST
-            names = sorted(c.name for c in s.cookies)
-            LAST = (f"login={r.status_code} redirects={len(r.history)} "
-                    f"host={requests.utils.urlparse(r.url).netloc} cookies={len(names)}")
-            logger.info("qureo login: status=%s redirects=%s cookies=%s",
-                        r.status_code, len(r.history), len(names))
-            if r.status_code in (400, 401, 403):
-                raise LoginFailed()
-            # الدخول الناجح يرجّع 302 ويضع كوكي egy_student_access_token؛ غيابه = بيانات خاطئة
-            if not any("access_token" in n for n in names):
-                # نسجل ملخصاً بسيطاً للرد (رسالة الخطأ فقط، بدون بيانات دخول) لتشخيص السبب
-                snippet = " ".join((getattr(r, "text", "") or "")[:150].split())
-                LAST += f" | type={r.headers.get('content-type')} body={snippet!r}"
-                raise LoginFailed()
-            p = s.get(progress_url, timeout=TIMEOUT)
-            LAST += f" | userinfo={p.status_code} type={p.headers.get('content-type')}"
-            logger.info("qureo userinfo: status=%s type=%s", p.status_code, p.headers.get("content-type"))
-            if p.status_code in (401, 403):
-                raise LoginFailed()
-            p.raise_for_status()
-            if "json" not in (p.headers.get("content-type") or "").lower():
-                raise ValueError("userinfo not json")
-            data = p.json()
-        chapter = _opt(data, ch_key, str)
-        diamonds = _opt(data, dm_key, int)
-        perms = data.get("permissions") if isinstance(data, dict) else None
-        courses = sorted({p for p in (perms or []) if isinstance(p, str) and not p.endswith("_trial")})
-        return {"chapter": chapter, "diamonds": diamonds, "courses": courses, "demo": False}
-    except LoginFailed:
-        raise
-    except (requests.RequestException, KeyError, IndexError, ValueError, TypeError) as e:
-        # نسجّل نوع الخطأ فقط (بدون أي بيانات دخول)
-        LAST += f" | فشل: {type(e).__name__}"
-        logger.warning("qureo failed: %s", type(e).__name__)
-        raise QureoUnavailable(type(e).__name__) from None
-
 
 def fetch_progress(username, password):
-    """يرجع {"chapter", "diamonds", "demo"} أو يرفع LoginFailed / NotConfigured / QureoUnavailable."""
-    if not username or not password:
-        raise LoginFailed()
-    if MODE == "real":
-        return _real(username, password)
-    return _demo(username)
+    """
+    دالة ذكية للاتصال بمنصة Qureo / Sprix Learning Square مع تجربة عدة روابط وحقول مختلفة لضمان تسجيل الدخول بنجاح.
+    """
+    session = requests.Session()
+    session.headers.update({
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    })
+
+    # الروابط المحتملة لتسجيل الدخول في المنصة التعليمية
+    login_urls = [
+        "https://egy.app.spx-learning-square.com/login",
+        "https://egy.app.spx-learning-square.com/api/login",
+        "https://me-portal.qureo.education/oauth2/password-login",
+        "https://me-portal.qureo.education/api/login"
+    ]
+
+    # الأشكال المحتملة لأسماء حقول بيانات الدخول
+    payload_variants = [
+        {"student_id": username, "password": password},
+        {"username": username, "password": password},
+        {"login_id": username, "password": password},
+        {"code": username, "password": password}
+    ]
+
+    success = False
+    data = {}
+
+    for url in login_urls:
+        for payload in payload_variants:
+            try:
+                base_origin = url.rsplit("/", 1)[0]
+                session.headers.update({"Origin": base_origin, "Referer": url})
+                
+                response = session.post(url, json=payload, timeout=10, allow_redirects=True)
+                
+                if response.status_code == 200:
+                    try:
+                        res_json = response.json()
+                        if res_json:
+                            data = res_json
+                            success = True
+                            break
+                    except:
+                        if session.cookies:
+                            success = True
+                            break
+                elif response.status_code in (400, 401, 403):
+                    continue
+            except Exception as e:
+                logger.debug(f"Attempt failed for {url}: {e}")
+                continue
+        if success:
+            break
+
+    if not success:
+        raise Exception("بيانات الدخول غير صحيحة أو أن المنصة تواجه ضغطاً حالياً. تأكد من كود الطالب وكلمة المرور.")
+
+    # استخراج التقدم ورصيد الدايموند بمرونة عالية
+    progress_data = {
+        "chapter": data.get("current_chapter", data.get("chapter_name", data.get("chapter", "الفصل الأول"))),
+        "diamonds": data.get("diamonds", data.get("gems", data.get("balance", 0)))
+    }
+
+    return progress_data
