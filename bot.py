@@ -203,7 +203,7 @@ def gate_message(message):
 # =========================
 # QUREO / AUTOMATION FLOW
 # =========================
-QUREO_URL = "https://me-portal.qureo.education/"
+QUREO_URL = "https://me-portal.qureo.education/login"
 
 def qureo_grade_menu():
     markup = InlineKeyboardMarkup(row_width=1)
@@ -260,8 +260,7 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
                 )
             except Exception as launch_err:
                 bot.edit_message_text(
-                    f"❌ <b>خطأ قاتل في تشغيل المتصفح:</b>\n{esc(str(launch_err))}\n\n"
-                    f"💡 <i>تأكد من تثبيت متصفحات Playwright على السيرفر.</i>",
+                    f"❌ <b>خطأ في تشغيل المتصفح:</b>\n{esc(str(launch_err))}",
                     chat_id, message_id, parse_mode="HTML"
                 )
                 return
@@ -278,28 +277,41 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
 
             page = await context.new_page()
 
-            # التوجه مباشرة لصفحة تسجيل الدخول مع الانتظار الشامل لتحميل العناصر
             bot.edit_message_text("⏳ جاري فتح صفحة تسجيل الدخول...", chat_id, message_id)
-            await page.goto("https://me-portal.qureo.education/login", timeout=60000, wait_until="networkidle")
-            await asyncio.sleep(3)
+            
+            try:
+                await page.goto(QUREO_URL, timeout=60000, wait_until="load")
+            except Exception as nav_err:
+                bot.edit_message_text(f"❌ خطأ في فتح الرابط: {esc(str(nav_err))}", chat_id, message_id)
+                await browser.close()
+                return
 
-            bot.edit_message_text("⏳ جاري إدخال بيانات الحساب...", chat_id, message_id)
+            await asyncio.sleep(4)
 
-            # استخدام محددات دقيقة مطابقة لصورة النموذج (Login ID هو أول حقل، Password هو الثاني)
-            user_locator = page.locator('input').nth(0)
-            await user_locator.wait_for(state="visible", timeout=30000)
-            await user_locator.click()
-            await user_locator.fill(username)
-            await asyncio.sleep(0.5)
+            try:
+                user_locator = page.locator('input').nth(0)
+                await user_locator.wait_for(state="visible", timeout=25000)
+                await user_locator.click()
+                await user_locator.fill(username)
+                await asyncio.sleep(0.5)
 
-            pass_locator = page.locator('input').nth(1)
-            await pass_locator.wait_for(state="visible", timeout=30000)
-            await pass_locator.click()
-            await pass_locator.fill(password)
-            await asyncio.sleep(0.5)
+                pass_locator = page.locator('input').nth(1)
+                await pass_locator.wait_for(state="visible", timeout=15000)
+                await pass_locator.click()
+                await pass_locator.fill(password)
+                await asyncio.sleep(0.5)
 
-            submit_locator = page.locator('button:has-text("Login"), button').last
-            await submit_locator.click()
+                submit_locator = page.locator('button:has-text("Login"), button').last
+                await submit_locator.click()
+            except Exception as form_err:
+                await page.screenshot(path="debug_error.png")
+                logger.error(f"Form interaction failed, screenshot saved. Error: {form_err}")
+                bot.edit_message_text(
+                    f"❌ <b>فشل العثور على حقول الدخول (غالباً حماية من السيرفر):</b>\n{esc(str(form_err))}",
+                    chat_id, message_id, parse_mode="HTML"
+                )
+                await browser.close()
+                return
 
             bot.edit_message_text("⏳ جاري تسجيل الدخول وبدء شريط التقدم...", chat_id, message_id)
             await asyncio.sleep(5)
@@ -501,8 +513,8 @@ def handle_callbacks(call):
             if g in library.GRADE_TRACKS:
                 bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر المسار:", chat_id, msg_id, reply_markup=track_menu(g))
             else:
-                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, term_menu(g))
+                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, term_menu(g))
 
 if __name__ == "__main__":
-    logger.info("Bot started with Exact Index Locators & Progress Bar...")
+    logger.info("Bot started with Full Script & Screenshot Diagnostics...")
     bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
