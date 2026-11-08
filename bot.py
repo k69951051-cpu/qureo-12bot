@@ -4,6 +4,7 @@ import logging
 import time
 import asyncio
 import threading
+import requests
 
 import telebot
 import library
@@ -272,8 +273,42 @@ def _try_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- Playwright Automation Worker ---
+# --- Robust Hybrid Automation Worker (API Login + Playwright Cookie Injection) ---
 async def run_qureo_automation(chat_id, message_id, username, password, grade):
+    bot.edit_message_text("⏳ جاري تسجيل الدخول برمجياً عبر واجهة Qureo...", chat_id, message_id)
+    
+    login_url = "https://me-portal.qureo.education/oauth2/password-login"
+    headers = {
+        "Accept": "*/*",
+        "Origin": "https://me-portal.qureo.education",
+        "Referer": "https://me-portal.qureo.education/login",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+    }
+
+    cookies_list = []
+    try:
+        with requests.Session() as s:
+            s.headers.update(headers)
+            r = s.post(login_url, json={"student_id": username, "password": password}, timeout=15, allow_redirects=True)
+            if r.status_code in (400, 401, 403):
+                raise Exception("بيانات الدخول غير صحيحة (اسم المستخدم أو كلمة المرور خاطئة).")
+            
+            names = sorted(c.name for c in s.cookies)
+            if not any("access_token" in n for n in names):
+                raise Exception("فشل المصادقة: لم يتم استلام رمز الوصول (Access Token). تأكد من صحة بياناتك.")
+
+            for c in s.cookies:
+                cookies_list.append({
+                    "name": c.name,
+                    "value": c.value,
+                    "domain": c.domain or "me-portal.qureo.education",
+                    "path": c.path or "/"
+                })
+    except Exception as auth_err:
+        bot.edit_message_text(f"❌ خطأ في المصادقة: {esc(str(auth_err))}", chat_id, message_id)
+        return
+
+    # تشغيل متصفح Playwright وحقن جلسة الدخول جاهزة
     async with async_playwright() as p:
         try:
             browser = await p.chromium.launch(headless=True)
@@ -281,36 +316,16 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
             bot.edit_message_text(f"❌ تعذر تشغيل محرك الأتمتة: {esc(str(launch_err))}", chat_id, message_id)
             return
 
-        page = await browser.new_page()
+        context = await browser.new_context()
+        await context.add_cookies(cookies_list)
+        page = await context.new_page()
+
         try:
-            bot.edit_message_text("⏳ جاري الاتصال بمنصة Qureo وتسجيل الدخول...", chat_id, message_id)
+            bot.edit_message_text("⏳ تم تسجيل الدخول بنجاح، جاري فتح لوحة التحكم وأتمتة الحل...", chat_id, message_id)
             
-            # الانتقال لصفحة تسجيل الدخول الفعلي للواجهة
-            await page.goto("https://me-portal.qureo.education/login", timeout=40000)
-            
-            try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
-            except:
-                await page.wait_for_load_state("domcontentloaded")
-
-            # الانتظار حتى تظهر حقول الإدخال في الصفحة
-            await page.wait_for_selector("input", state="visible", timeout=15000)
-
-            # إيجاد وتعبئة حقل اسم المستخدم / رقم الدخول
-            user_locator = page.locator('input[name="student_id"], input[name="username"], input[type="text"], input[type="email"], input').first
-            await user_locator.wait_for(state="visible", timeout=10000)
-            await user_locator.fill(username)
-
-            # إيجاد وتعبئة حقل كلمة المرور
-            pass_locator = page.locator('input[name="password"], input[type="password"]').first
-            await pass_locator.wait_for(state="visible", timeout=10000)
-            await pass_locator.fill(password)
-
-            # الضغط على زر تسجيل الدخول
-            submit_locator = page.locator('button[type="submit"], button:has-text("تسجيل الدخول"), input[type="submit"], button').first
-            await submit_locator.click()
-
-            await asyncio.sleep(5)
+            # الانتقال المباشر للوحة التحكم بدون الحاجة لصفحة تسجيل الدخول
+            await page.goto("https://me-portal.qureo.education/", timeout=40000)
+            await asyncio.sleep(3)
 
             # محاكاة خطوات الحل الفعلي مع تحديث النسبة المئوية لحظياً (Live Progress)
             total_steps = 20
