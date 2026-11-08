@@ -278,26 +278,27 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
 
             page = await context.new_page()
 
-            # التوجه مباشرة لصفحة تسجيل الدخول الرسمية بدون أي خطوات إضافية
-            bot.edit_message_text("⏳ جاري فتح صفحة تسجيل الدخول المباشرة...", chat_id, message_id)
-            await page.goto("https://me-portal.qureo.education/login", timeout=45000, wait_until="domcontentloaded")
-            await asyncio.sleep(2)
+            # التوجه مباشرة لصفحة تسجيل الدخول مع الانتظار الشامل لتحميل العناصر
+            bot.edit_message_text("⏳ جاري فتح صفحة تسجيل الدخول...", chat_id, message_id)
+            await page.goto("https://me-portal.qureo.education/login", timeout=60000, wait_until="networkidle")
+            await asyncio.sleep(3)
 
-            bot.edit_message_text("⏳ جاري كتابة بيانات الحساب...", chat_id, message_id)
+            bot.edit_message_text("⏳ جاري إدخال بيانات الحساب...", chat_id, message_id)
 
-            user_locator = page.locator('input[type="text"], input[name="username"], input[name="student_id"], input').first
-            await user_locator.wait_for(state="visible", timeout=20000)
+            # استخدام محددات دقيقة مطابقة لصورة النموذج (Login ID هو أول حقل، Password هو الثاني)
+            user_locator = page.locator('input').nth(0)
+            await user_locator.wait_for(state="visible", timeout=30000)
             await user_locator.click()
             await user_locator.fill(username)
             await asyncio.sleep(0.5)
 
-            pass_locator = page.locator('input[type="password"]').first
-            await pass_locator.wait_for(state="visible", timeout=20000)
+            pass_locator = page.locator('input').nth(1)
+            await pass_locator.wait_for(state="visible", timeout=30000)
             await pass_locator.click()
             await pass_locator.fill(password)
             await asyncio.sleep(0.5)
 
-            submit_locator = page.locator('button[type="submit"], button:has-text("تسجيل الدخول"), button:has-text("Login"), input[type="submit"]').first
+            submit_locator = page.locator('button:has-text("Login"), button').last
             await submit_locator.click()
 
             bot.edit_message_text("⏳ جاري تسجيل الدخول وبدء شريط التقدم...", chat_id, message_id)
@@ -500,8 +501,8 @@ def handle_callbacks(call):
             if g in library.GRADE_TRACKS:
                 bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر المسار:", chat_id, msg_id, reply_markup=track_menu(g))
             else:
-                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, reply_markup=term_menu(g))
+                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, term_menu(g))
 
 if __name__ == "__main__":
-    logger.info("Bot started with Direct Login Automation & Progress Bar...")
+    logger.info("Bot started with Exact Index Locators & Progress Bar...")
     bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
