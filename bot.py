@@ -239,52 +239,62 @@ def _try_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- Stealth Playwright Worker with Visual Progress Bar ---
+# --- Stealth Playwright Worker with Live Progress Bar & Error Handling ---
 async def run_qureo_automation(chat_id, message_id, username, password, grade):
-    async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--window-size=1920,1080"
-                ]
+    try:
+        bot.edit_message_text("⏳ جاري تهيئة متصفح الأتمتة...", chat_id, message_id)
+    except Exception:
+        pass
+
+    try:
+        async with async_playwright() as p:
+            try:
+                bot.edit_message_text("⏳ جاري إقلاع المتصفح الخفي...", chat_id, message_id)
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--window-size=1920,1080"
+                    ]
+                )
+            except Exception as launch_err:
+                bot.edit_message_text(
+                    f"❌ <b>خطأ قاتل في تشغيل المتصفح:</b>\n{esc(str(launch_err))}\n\n"
+                    f"💡 <i>تأكد من تثبيت متصفحات Playwright على السيرفر.</i>",
+                    chat_id, message_id, parse_mode="HTML"
+                )
+                return
+
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080},
+                locale="en-US,en;q=0.9"
             )
-        except Exception as launch_err:
-            bot.edit_message_text(f"❌ تعذر تشغيل محرك الأتمتة: {esc(str(launch_err))}", chat_id, message_id)
-            return
 
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080},
-            locale="en-US,en;q=0.9"
-        )
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            """)
 
-        await context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        """)
+            page = await context.new_page()
 
-        page = await context.new_page()
-
-        try:
             bot.edit_message_text("⏳ جاري فتح صفحة تسجيل الدخول...", chat_id, message_id)
-            await page.goto("https://egy.app.spx-learning-square.com/login", timeout=60000, wait_until="domcontentloaded")
+            await page.goto("https://egy.app.spx-learning-square.com/login", timeout=45000, wait_until="domcontentloaded")
             await asyncio.sleep(2)
 
             bot.edit_message_text("⏳ جاري كتابة بيانات الحساب...", chat_id, message_id)
 
             user_locator = page.locator('input[type="text"], input[name="username"], input[name="student_id"], input').first
-            await user_locator.wait_for(state="visible", timeout=30000)
+            await user_locator.wait_for(state="visible", timeout=20000)
             await user_locator.click()
             await user_locator.fill(username)
             await asyncio.sleep(0.5)
 
             pass_locator = page.locator('input[type="password"]').first
-            await pass_locator.wait_for(state="visible", timeout=30000)
+            await pass_locator.wait_for(state="visible", timeout=20000)
             await pass_locator.click()
             await pass_locator.fill(password)
             await asyncio.sleep(0.5)
@@ -292,10 +302,9 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
             submit_locator = page.locator('button[type="submit"], button:has-text("تسجيل الدخول"), button:has-text("Login"), input[type="submit"]').first
             await submit_locator.click()
 
-            bot.edit_message_text("⏳ جاري تسجيل الدخول وفتح الحساب...", chat_id, message_id)
+            bot.edit_message_text("⏳ جاري تسجيل الدخول وبدء شريط التقدم...", chat_id, message_id)
             await asyncio.sleep(5)
 
-            # شريط التحميل والتقدم الحي (Live Progress Bar)
             total_steps = 20
             for step in range(1, total_steps + 1):
                 percent = int((step / total_steps) * 100)
@@ -323,15 +332,14 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
                 f"✅ تم حل جميع الدروس المتاحة ورفع الدايموند بنجاح.",
                 chat_id, message_id, parse_mode="HTML"
             )
-
-        except Exception as e:
-            logger.error("Automation error: %s", e)
-            try:
-                bot.edit_message_text(f"❌ الخطأ الفعلي: {esc(str(e))}", chat_id, message_id)
-            except Exception:
-                pass
-        finally:
             await browser.close()
+
+    except Exception as e:
+        logger.error("Automation error: %s", e)
+        try:
+            bot.edit_message_text(f"❌ <b>خطأ أثناء التنفيذ:</b>\n{esc(str(e))}", chat_id, message_id, parse_mode="HTML")
+        except Exception:
+            pass
 
 def start_async_automation(chat_id, message_id, username, password, grade):
     asyncio.run(run_qureo_automation(chat_id, message_id, username, password, grade))
@@ -497,5 +505,5 @@ def handle_callbacks(call):
                 bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, reply_markup=term_menu(g))
 
 if __name__ == "__main__":
-    logger.info("Bot started with Progress Bar & Stealth Automation...")
+    logger.info("Bot started with Error Diagnostics & Progress Bar Automation...")
     bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
