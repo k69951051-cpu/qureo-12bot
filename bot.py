@@ -341,10 +341,10 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
                 f"🎉 تم إنجاز المهمة ورفع رصيد الدايموند وتحديث الحساب.",
                 chat_id, message_id, parse_mode="HTML"
             )
-        except Exception as e:
+      except Exception as e:
             logger.error("Automation error: %s", e)
             try:
-                bot.edit_message_text(f"❌ حدث خطأ أثناء التسجيل أو الأتمتة: تأكد من صحة البيانات أو حاول لاحقاً.", chat_id, message_id)
+                bot.edit_message_text(f"❌ الخطأ الفعلي: {esc(str(e))}", chat_id, message_id)
             except Exception:
                 pass
         finally:
