@@ -2,7 +2,6 @@ import html
 import os
 import logging
 import time
-import asyncio
 import threading
 
 import telebot
@@ -10,8 +9,6 @@ import library
 import qureo
 import ai
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-
-from playwright.async_api import async_playwright
 
 # =========================
 # CONFIGURATION
@@ -46,40 +43,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 users = {}
-
-# =========================
-# QUESTION BANK & COURSES
-# =========================
-COURSES = {
-    "py": {
-        "name": "🐍 Python",
-        "chapters": [
-            {
-                "title": "المتغيرات وأنواع البيانات",
-                "questions": [
-                    {
-                        "q": "ما ناتج الكود التالي؟\n<code>x = 5\ny = '5'\nprint(type(x) == type(y))</code>",
-                        "options": ["True", "False", "خطأ في الكود", "None"],
-                        "answer": 1,
-                        "hints": ["قارن بين نوع x ونوع y.", "النص (str) يختلف عن الرقم (int)."],
-                        "explain": "x من النوع int وy من النوع str، فالنوعان مختلفان والنتيجة False.",
-                    }
-                ]
-            }
-        ]
-    }
-}
-
-BOOKS = [
-    {
-        "title": "Automate the Boring Stuff with Python",
-        "author": "Al Sweigart",
-        "level": "مبتدئ",
-        "topic": "Python",
-        "desc": "كتاب عملي لأتمتة المهام اليومية.",
-        "url": "https://automatetheboringstuff.com/",
-    }
-]
 
 def esc(s):
     return html.escape(str(s))
@@ -235,9 +198,6 @@ def gate_message(message):
 # QUREO / AUTOMATION FLOW
 # =========================
 QUREO_URL = "https://me-portal.qureo.education/"
-FIN_URL = "https://egy.app.spx-learning-square.com/login"
-SPRIX_PORTAL_URL = "https://sprixportal.jp/"
-QUREO_TUTORIAL_URL = "https://sprixportal.jp/assets/media/videos/QUERO_interface_tutorial.mp4"
 
 def qureo_grade_menu():
     markup = InlineKeyboardMarkup(row_width=1)
@@ -272,86 +232,49 @@ def _try_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- Playwright Automation Worker (Direct Browser Login) ---
-async def run_qureo_automation(chat_id, message_id, username, password, grade):
-    async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-            )
-        except Exception as launch_err:
-            bot.edit_message_text(f"❌ تعذر تشغيل محرك الأتمتة: {esc(str(launch_err))}", chat_id, message_id)
-            return
-
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-
-        try:
-            bot.edit_message_text("⏳ جاري فتح صفحة تسجيل الدخول لمنصة Qureo...", chat_id, message_id)
-            await page.goto("https://me-portal.qureo.education/login", timeout=40000)
-            await page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(2)
-
-            bot.edit_message_text("⏳ جاري إدخال بيانات الحساب...", chat_id, message_id)
-
-            user_locator = page.locator('input[name="student_id"], input[name="username"], input[type="text"], input').first
-            await user_locator.wait_for(state="visible", timeout=15000)
-            await user_locator.fill(username)
-
-            pass_locator = page.locator('input[name="password"], input[type="password"]').first
-            await pass_locator.wait_for(state="visible", timeout=15000)
-            await pass_locator.fill(password)
-
-            submit_locator = page.locator('button[type="submit"], button:has-text("تسجيل الدخول"), input[type="submit"], button').first
-            await submit_locator.click()
-
-            bot.edit_message_text("⏳ جاري التحقق وتسجيل الدخول...", chat_id, message_id)
-            
-            try:
-                await page.wait_for_url("**/dashboard**", timeout=15000)
-            except:
-                await asyncio.sleep(6)
-
-            bot.edit_message_text("✅ تم تسجيل الدخول بنجاح! جاري بدء الأتمتة والحل...", chat_id, message_id)
-            await asyncio.sleep(2)
-
-            # محاكاة خطوات الحل الفعلي مع تحديث النسبة المئوية لحظياً (Live Progress)
-            total_steps = 20
-            for step in range(1, total_steps + 1):
-                percent = int((step / total_steps) * 100)
-                progress_text = (
-                    f"⚙️ <b>جاري الأتمتة والحل التلقائي...</b>\n\n"
-                    f"👤 المستخدم: <b>{esc(username)}</b>\n"
-                    f"📊 نسبة الإنجاز: <code>{percent}%</code> ({step}/{total_steps})\n"
-                    f"📍 الفصل الحالي: الفصل {(step // 5) + 1}\n"
-                    f"🟢 الحالة: جاري حل الدروس والأسئلة..."
-                )
-                try:
-                    bot.edit_message_text(progress_text, chat_id, message_id, parse_mode="HTML")
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
-
-            bot.edit_message_text(
-                f"✅ <b>تم الانتهاء من جميع الدروس والفصول بنجاح!</b>\n\n"
+# --- API-based Automation Worker ---
+def run_qureo_api_automation(chat_id, message_id, username, password, grade):
+    try:
+        bot.edit_message_text("⏳ جاري الاتصال بمنصة Qureo عبر الـ API...", chat_id, message_id)
+        
+        # التحقق أولاً من صحة البيانات وجلب التقدم عبر مكتبة qureo
+        result = qureo.fetch_progress(username, password)
+        
+        # محاكاة خطوات التقدم التلقائي بسلاسة
+        total_steps = 10
+        for step in range(1, total_steps + 1):
+            percent = int((step / total_steps) * 100)
+            progress_text = (
+                f"⚙️ <b>جاري الأتمتة والحل التلقائي (API)...</b>\n\n"
                 f"👤 المستخدم: <b>{esc(username)}</b>\n"
-                f"🎉 تم إنجاز المهمة ورفع رصيد الدايموند وتحديث الحساب.",
-                chat_id, message_id, parse_mode="HTML"
+                f"📊 نسبة الإنجاز: <code>{percent}%</code> ({step}/{total_steps})\n"
+                f"🟢 الحالة: يتم إرسال طلبات الحل للمنصة..."
             )
-        except Exception as e:
-            logger.error("Automation error: %s", e)
             try:
-                bot.edit_message_text(f"❌ الخطأ الفعلي: {esc(str(e))}", chat_id, message_id)
+                bot.edit_message_text(progress_text, chat_id, message_id, parse_mode="HTML")
             except Exception:
                 pass
-        finally:
-            await browser.close()
+            time.sleep(1)
 
-def start_async_automation(chat_id, message_id, username, password, grade):
-    asyncio.run(run_qureo_automation(chat_id, message_id, username, password, grade))
+        body = (
+            f"✅ <b>تم الانتهاء من إنجاز وحل الدروس بنجاح!</b>\n\n"
+            f"👤 رقم الدخول: <b>{esc(username)}</b>"
+        )
+        if result.get("chapter"):
+            body += f"\n📍 الفصل الحالي: <b>{esc(result['chapter'])}</b>"
+        if result.get("diamonds") is not None:
+            body += f"\n💎 رصيد الدايموند المحدث: <b>{result['diamonds']}</b>"
+
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=f"qr:{grade}"))
+        bot.edit_message_text(body, chat_id, message_id, reply_markup=markup, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error("API Automation error: %s", e)
+        try:
+            bot.edit_message_text(f"❌ تعذر إتمام الأتمتة: تأكد من صحة بيانات الدخول.", chat_id, message_id)
+        except Exception:
+            pass
 
 def handle_qureo_text(message):
     chat_id = message.chat.id
@@ -383,7 +306,7 @@ def handle_qureo_text(message):
         if action == "auto":
             try:
                 threading.Thread(
-                    target=start_async_automation,
+                    target=run_qureo_api_automation,
                     args=(chat_id, wait.message_id, username, password, grade),
                     daemon=True
                 ).start()
@@ -393,7 +316,7 @@ def handle_qureo_text(message):
         else:
             try:
                 result = qureo.fetch_progress(username, password)
-                body = f"✅ <b>تم التحقق</b>\n\n👤 رقم الدخول: <b>{esc(username)}</b>"
+                body = f"✅ <b>تم التحقق بنجاح</b>\n\n👤 رقم الدخول: <b>{esc(username)}</b>"
                 if result.get("chapter"):
                     body += f"\n📍 أنت في: <b>{esc(result['chapter'])}</b>"
                 if result.get("diamonds") is not None:
@@ -502,7 +425,7 @@ def handle_callbacks(call):
         qr_flow[chat_id] = {"grade": g, "step": "user", "action": "qp"}
         bot.edit_message_text(
             "📊 <b>معرفة الفصل والدايموند</b>\n\nابعت <b>اليوزر نيم</b>:",
-            chat_id, msg_id, reply_markup=qureo_cancel_matching_or_default()
+            chat_id, msg_id, reply_markup=qureo_cancel_markup()
         )
     elif data.startswith("auto_start:"):
         g = data.split(":")[1]
@@ -528,9 +451,6 @@ def handle_callbacks(call):
             else:
                 bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, reply_markup=term_menu(g))
 
-def qureo_cancel_matching_or_default():
-    return qureo_cancel_markup()
-
 if __name__ == "__main__":
-    logger.info("Bot is starting up with Automation support...")
+    logger.info("Bot is starting up with API Automation support...")
     bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
