@@ -502,4 +502,15 @@ def handle_callbacks(call):
     elif data.startswith("st:"):
         key = data.split(":")[1]
         if key in library.STAGES:
-            bot.edit_message_text(f"{library.STAGES[key]
+            bot.edit_message_text(f"{library.STAGES[key][0]}\n\nاختر الصف:", chat_id, msg_id, reply_markup=stage_menu(key))
+    elif data.startswith("g:"):
+        g = data.split(":")[1]
+        if g in library.GRADES:
+            if g in library.GRADE_TRACKS:
+                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر المسار:", chat_id, msg_id, reply_markup=track_menu(g))
+            else:
+                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, reply_markup=term_menu(g))
+
+if __name__ == "__main__":
+    logger.info("Bot started with Fixed Indentation & Portal Session...")
+    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
