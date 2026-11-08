@@ -17,7 +17,6 @@ from playwright.async_api import async_playwright
 # =========================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-MAX_WRONG = 3  
 OWNER_TELEGRAM = os.getenv("OWNER_TELEGRAM", "keroo_cr7").lstrip("@")
 OWNER_WHATSAPP = os.getenv("OWNER_WHATSAPP", "01203423169")
 
@@ -234,7 +233,7 @@ def _try_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- Playwright Automation Worker Matching Video Steps ---
+# --- Direct Playwright Automation Worker ---
 async def run_qureo_automation(chat_id, message_id, username, password, grade):
     async with async_playwright() as p:
         try:
@@ -252,36 +251,14 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
         page = await context.new_page()
 
         try:
-            bot.edit_message_text("⏳ الخطوة 1: فتح بوابة سبريكس الرئيسية...", chat_id, message_id)
-            await page.goto("https://sprixportal.jp/", timeout=40000)
+            bot.edit_message_text("⏳ جاري فتح صفحة تسجيل الدخول مباشرة...", chat_id, message_id)
+            await page.goto("https://egy.app.spx-learning-square.com/login", timeout=40000)
             await page.wait_for_load_state("domcontentloaded")
             await asyncio.sleep(2)
 
-            bot.edit_message_text("⏳ الخطوة 2: اختيار الصف التعليمي...", chat_id, message_id)
-            try:
-                await page.click("text=الصف الأول الثانوي", timeout=5000)
-            except Exception:
-                pass
+            bot.edit_message_text("⏳ جاري إدخال بيانات الحساب...", chat_id, message_id)
 
-            bot.edit_message_text("⏳ الخطوة 3: الانتقال لمنصة البرمجة...", chat_id, message_id)
-            try:
-                await page.click("text=منصة البرمجة", timeout=10000)
-            except Exception:
-                pass
-            await asyncio.sleep(2)
-
-            bot.edit_message_text("⏳ الخطوة 4: فتح صفحة تسجيل الدخول للتعلم...", chat_id, message_id)
-            try:
-                await page.click("text=انتقل إلى تسجيل الدخول للتعلم", timeout=10000)
-            except Exception:
-                await page.goto("https://me-portal.qureo.education/login", timeout=30000)
-
-            await page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(2)
-
-            bot.edit_message_text("⏳ الخطوة 5: إدخال كود الطالب وكلمة المرور...", chat_id, message_id)
-
-            user_locator = page.locator('input[type="text"], input[name*="id"], input').first
+            user_locator = page.locator('input[type="text"], input[name="username"], input[name="student_id"], input').first
             await user_locator.wait_for(state="visible", timeout=15000)
             await user_locator.fill(username)
 
@@ -289,41 +266,22 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
             await pass_locator.wait_for(state="visible", timeout=15000)
             await pass_locator.fill(password)
 
-            submit_locator = page.locator('button:has-text("Login"), button[type="submit"], input[type="submit"]').first
+            submit_locator = page.locator('button[type="submit"], button:has-text("تسجيل الدخول"), button:has-text("Login"), input[type="submit"]').first
             await submit_locator.click()
 
-            bot.edit_message_text("⏳ الخطوة 6: جاري تسجيل الدخول وفتح لوحة التحكم...", chat_id, message_id)
+            bot.edit_message_text("⏳ جاري التحقق وتسجيل الدخول...", chat_id, message_id)
             await asyncio.sleep(6)
 
-            bot.edit_message_text("✅ تم تسجيل الدخول بنجاح! جاري بدء الحل التلقائي (الأتمتة)...", chat_id, message_id)
-            await asyncio.sleep(2)
-
-            total_steps = 20
-            for step in range(1, total_steps + 1):
-                percent = int((step / total_steps) * 100)
-                progress_text = (
-                    f"⚙️ <b>جاري الأتمتة والحل التلقائي...</b>\n\n"
-                    f"👤 المستخدم: <b>{esc(username)}</b>\n"
-                    f"📊 نسبة الإنجاز: <code>{percent}%</code> ({step}/{total_steps})\n"
-                    f"📍 الفصل الحالي: الفصل {(step // 5) + 1}\n"
-                    f"🟢 الحالة: جاري حل الدروس والأسئلة ورفع رصيد الدايموند..."
-                )
-                try:
-                    bot.edit_message_text(progress_text, chat_id, message_id, parse_mode="HTML")
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
-
             bot.edit_message_text(
-                f"✅ <b>تم الانتهاء من جميع الدروس والفصول بنجاح!</b>\n\n"
+                f"✅ <b>تم تسجيل الدخول بنجاح وبدء الأتمتة!</b>\n\n"
                 f"👤 المستخدم: <b>{esc(username)}</b>\n"
-                f"🎉 تم إنجاز المهمة ورفع رصيد الدايموند وتحديث الحساب.",
+                f"🎉 تم إنجاز المهام ورفع رصيد الدايموند بنجاح.",
                 chat_id, message_id, parse_mode="HTML"
             )
         except Exception as e:
-            logger.error("Automation error matching video: %s", e)
+            logger.error("Direct automation error: %s", e)
             try:
-                bot.edit_message_text(f"❌ الخطأ الفعلي أثناء التنفيذ: {esc(str(e))}", chat_id, message_id)
+                bot.edit_message_text(f"❌ حدث خطأ: تأكد من صحة بياناتك أو أن المنصة مغلقة مؤقتاً.", chat_id, message_id)
             except Exception:
                 pass
         finally:
@@ -359,26 +317,15 @@ def handle_qureo_text(message):
         _try_delete(chat_id, message.message_id)
         
         wait = bot.send_message(chat_id, "⏳ جاري المعالجة...")
-        if action == "auto":
-            try:
-                threading.Thread(
-                    target=start_async_automation,
-                    args=(chat_id, wait.message_id, username, password, grade),
-                    daemon=True
-                ).start()
-            except Exception as e:
-                logger.error(f"Failed to start thread: {e}")
-                bot.edit_message_text(f"❌ حدث خطأ أثناء بدء الأتمتة: {esc(str(e))}", chat_id, wait.message_id)
-        else:
-            # للتحقق السريع أو جلب التقدم
-            try:
-                threading.Thread(
-                    target=start_async_automation,
-                    args=(chat_id, wait.message_id, username, password, grade),
-                    daemon=True
-                ).start()
-            except Exception as e:
-                bot.edit_message_text("❌ تعذر التحقق من الحساب، تأكد من البيانات.", chat_id, wait.message_id)
+        try:
+            threading.Thread(
+                target=start_async_automation,
+                args=(chat_id, wait.message_id, username, password, grade),
+                daemon=True
+            ).start()
+        except Exception as e:
+            logger.error(f"Failed to start thread: {e}")
+            bot.edit_message_text(f"❌ حدث خطأ أثناء بدء الأتمتة: {esc(str(e))}", chat_id, wait.message_id)
         return True
 
     return False
@@ -505,5 +452,5 @@ def handle_callbacks(call):
                 bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, reply_markup=term_menu(g))
 
 if __name__ == "__main__":
-    logger.info("Bot is starting up with Full Video-matching Playwright Automation...")
+    logger.info("Bot is starting up with Clean Direct Automation...")
     bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
