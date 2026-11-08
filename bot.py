@@ -239,7 +239,7 @@ def _try_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- Stealth Playwright Worker with Live Progress Bar & Error Handling ---
+# --- Stealth Playwright Worker (Fixed Locale) ---
 async def run_qureo_automation(chat_id, message_id, username, password, grade):
     try:
         bot.edit_message_text("⏳ جاري تهيئة متصفح الأتمتة...", chat_id, message_id)
@@ -272,7 +272,7 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                 viewport={"width": 1920, "height": 1080},
-                locale="en-US,en;q=0.9"
+                locale="en-US"  # <-- تم تصحيح الـ Locale هنا بنجاح
             )
 
             await context.add_init_script("""
@@ -505,5 +505,5 @@ def handle_callbacks(call):
                 bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, reply_markup=term_menu(g))
 
 if __name__ == "__main__":
-    logger.info("Bot started with Error Diagnostics & Progress Bar Automation...")
+    logger.info("Bot started with Fixed Locale & Progress Bar Automation...")
     bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
