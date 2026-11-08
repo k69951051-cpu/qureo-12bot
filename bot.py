@@ -49,7 +49,6 @@ def esc(s):
     return html.escape(str(s))
 
 def make_progress_bar(percent, length=10):
-    """رسم شريط تقدم بصري جذاب"""
     filled = int(round(length * percent / 100))
     bar = "▓" * filled + "░" * (length - filled)
     return f"[{bar}]"
@@ -239,7 +238,6 @@ def _try_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- Stealth Playwright Worker with Portal Session & Progress Bar ---
 async def run_qureo_automation(chat_id, message_id, username, password, grade):
     try:
         bot.edit_message_text("⏳ جاري تهيئة متصفح الأتمتة...", chat_id, message_id)
@@ -280,7 +278,6 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
 
             page = await context.new_page()
 
-            # الخطوة الأساسية: زيارة البوابة الرئيسية أولاً لتوليد ملفات الجلسة (Cookies) كما في الفيديو
             bot.edit_message_text("⏳ الخطوة 1: الاتصال ببوابة سبريكس الأساسية...", chat_id, message_id)
             await page.goto("https://sprixportal.jp/", timeout=45000, wait_until="domcontentloaded")
             await asyncio.sleep(2)
@@ -291,7 +288,6 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
                 pass
             await asyncio.sleep(1)
 
-            # الانتقال لصفحة تسجيل الدخول بعد إنشاء الجلسة بنجاح
             bot.edit_message_text("⏳ الخطوة 2: الانتقال لصفحة تسجيل الدخول...", chat_id, message_id)
             await page.goto("https://egy.app.spx-learning-square.com/login", timeout=45000, wait_until="domcontentloaded")
             await asyncio.sleep(2)
@@ -502,4 +498,8 @@ def handle_callbacks(call):
         qr_flow.pop(chat_id, None)
         bot.edit_message_text("تم الإلغاء.", chat_id, msg_id, reply_markup=qureo_grade_menu())
     elif data.startswith("lib"):
-        
+        bot.edit_message_text("📚 <b>مكتبة الكتب</b>\n\nاختر المرحلة أو القسم:", chat_id, msg_id, reply_markup=library_home())
+    elif data.startswith("st:"):
+        key = data.split(":")[1]
+        if key in library.STAGES:
+            bot.edit_message_text(f"{library.STAGES[key]
