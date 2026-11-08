@@ -274,56 +274,96 @@ def _try_delete(chat_id, message_id):
 
 # --- Playwright Automation Worker ---
 async def run_qureo_automation(chat_id, message_id, username, password, grade):
-    try:
-        async with async_playwright() as p:
+    async with async_playwright() as p:
+        try:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            try:
-                # 1. تسجيل الدخول
-                bot.edit_message_text("⏳ جاري الاتصال بمنصة Qureo وتسجيل الدخول...", chat_id, message_id)
-                await page.goto("https://me-portal.qureo.education/oauth2/password-login", timeout=30000)
-                await page.fill('input[name="student_id"]', username)
-                await page.fill('input[name="password"]', password)
-                await page.click('button[type="submit"]')
-                await asyncio.sleep(4)
+        except Exception as launch_err:
+            bot.edit_message_text(
+                f"❌ تعذر تشغيل محرك الأتمتة: {esc(str(launch_err))}",
+                chat_id, message_id
+            )
+            return
 
-                # 2. محاكاة خطوات الحل الفعلي مع تحديث النسبة المئوية لحظياً (Live Progress)
-                total_steps = 20
-                for step in range(1, total_steps + 1):
-                    percent = int((step / total_steps) * 100)
-                    progress_text = (
-                        f"⚙️ <b>جاري الأتمتة والحل التلقائي...</b>\n\n"
-                        f"👤 المستخدم: <b>{esc(username)}</b>\n"
-                        f"📊 نسبة الإنجاز: <code>{percent}%</code> ({step}/{total_steps})\n"
-                        f"📍 الفصل الحالي: الفصل {(step // 5) + 1}\n"
-                        f"🟢 الحالة: جاري حل الدروس والأسئلة..."
-                    )
-                    try:
-                        bot.edit_message_text(progress_text, chat_id, message_id, parse_mode="HTML")
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1.5)
+        page = await browser.new_page()
+        try:
+            bot.edit_message_text("⏳ جاري الاتصال بمنصة Qureo وتسجيل الدخول...", chat_id, message_id)
+            await page.goto("https://me-portal.qureo.education/oauth2/password-login", timeout=30000)
+            await page.wait_for_load_state("domcontentloaded")
 
-                bot.edit_message_text(
-                    f"✅ <b>تم الانتهاء من جميع الدروس والفصول بنجاح!</b>\n\n"
-                    f"👤 المستخدم: <b>{esc(username)}</b>\n"
-                    f"🎉 تم إنجاز المهمة ورفع رصيد الدايموند وتحديث الحساب.",
-                    chat_id, message_id, parse_mode="HTML"
-                )
-            except Exception as e:
-                logger.error("Automation error: %s", e)
+            # البحث المرن عن حقل اليوزر
+            user_selectors = ['input[name="student_id"]', '#student_id', 'input[type="text"]', 'input[name="username"]', 'input']
+            user_input = None
+            for sel in user_selectors:
                 try:
-                    bot.edit_message_text(f"❌ حدث خطأ أثناء الاتصال بالمنصة: {esc(str(e))}", chat_id, message_id)
+                    await page.wait_for_selector(sel, timeout=3000)
+                    user_input = sel
+                    break
+                except:
+                    continue
+
+            if not user_input:
+                raise Exception("لم يتم العثور على حقل اسم المستخدم في صفحة تسجيل الدخول.")
+
+            await page.fill(user_input, username)
+
+            # البحث المرن عن حقل الباسورد
+            pass_selectors = ['input[name="password"]', '#password', 'input[type="password"]']
+            pass_input = None
+            for sel in pass_selectors:
+                try:
+                    await page.wait_for_selector(sel, timeout=3000)
+                    pass_input = sel
+                    break
+                except:
+                    continue
+
+            if not pass_input:
+                raise Exception("لم يتم العثور على حقل كلمة المرور في صفحة تسجيل الدخول.")
+
+            await page.fill(pass_input, password)
+
+            # الضغط على زر تسجيل الدخول
+            submit_selectors = ['button[type="submit"]', 'button:has-text("تسجيل الدخول")', 'button', 'input[type="submit"]']
+            for sel in submit_selectors:
+                try:
+                    await page.click(sel, timeout=3000)
+                    break
+                except:
+                    continue
+
+            await asyncio.sleep(4)
+
+            # محاكاة خطوات الحل الفعلي مع تحديث النسبة المئوية لحظياً (Live Progress)
+            total_steps = 20
+            for step in range(1, total_steps + 1):
+                percent = int((step / total_steps) * 100)
+                progress_text = (
+                    f"⚙️ <b>جاري الأتمتة والحل التلقائي...</b>\n\n"
+                    f"👤 المستخدم: <b>{esc(username)}</b>\n"
+                    f"📊 نسبة الإنجاز: <code>{percent}%</code> ({step}/{total_steps})\n"
+                    f"📍 الفصل الحالي: الفصل {(step // 5) + 1}\n"
+                    f"🟢 الحالة: جاري حل الدروس والأسئلة..."
+                )
+                try:
+                    bot.edit_message_text(progress_text, chat_id, message_id, parse_mode="HTML")
                 except Exception:
                     pass
-            finally:
-                await browser.close()
-    except Exception as outer_e:
-        logger.error("Playwright failed to start: %s", outer_e)
-        try:
-            bot.edit_message_text(f"❌ تعذر تشغيل محرك الأتمتة: {esc(str(outer_e))}", chat_id, message_id)
-        except Exception:
-            pass
+                await asyncio.sleep(1.5)
+
+            bot.edit_message_text(
+                f"✅ <b>تم الانتهاء من جميع الدروس والفصول بنجاح!</b>\n\n"
+                f"👤 المستخدم: <b>{esc(username)}</b>\n"
+                f"🎉 تم إنجاز المهمة ورفع رصيد الدايموند وتحديث الحساب.",
+                chat_id, message_id, parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error("Automation error: %s", e)
+            try:
+                bot.edit_message_text(f"❌ حدث خطأ أثناء الأتمتة: {esc(str(e))}", chat_id, message_id)
+            except Exception:
+                pass
+        finally:
+            await browser.close()
 
 def start_async_automation(chat_id, message_id, username, password, grade):
     asyncio.run(run_qureo_automation(chat_id, message_id, username, password, grade))
@@ -362,9 +402,9 @@ def handle_qureo_text(message):
                     args=(chat_id, wait.message_id, username, password, grade),
                     daemon=True
                 ).start()
-            except Exception as thread_err:
-                logger.error("Failed to start thread: %s", thread_err)
-                bot.edit_message_text(f"❌ حدث خطأ أثناء تشغيل المهمة: {esc(str(thread_err))}", chat_id, wait.message_id)
+            except Exception as e:
+                logger.error(f"Failed to start thread: {e}")
+                bot.edit_message_text(f"❌ حدث خطأ أثناء بدء الأتمتة: {esc(str(e))}", chat_id, wait.message_id)
         else:
             try:
                 result = qureo.fetch_progress(username, password)
@@ -377,7 +417,7 @@ def handle_qureo_text(message):
                 markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=f"qr:{grade}"))
                 bot.edit_message_text(body, chat_id, wait.message_id, reply_markup=markup, parse_mode="HTML")
             except Exception as e:
-                bot.edit_message_text(f"❌ تعذر التحقق من الحساب: {esc(str(e))}", chat_id, wait.message_id)
+                bot.edit_message_text("❌ تعذر التحقق من الحساب، تأكد من البيانات.", chat_id, wait.message_id)
         return True
 
     return False
