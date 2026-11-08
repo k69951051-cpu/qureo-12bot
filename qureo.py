@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 def fetch_progress(username, password):
     """
-    دالة ذكية للاتصال بمنصة Qureo / Sprix Learning Square مع تجربة عدة روابط وحقول مختلفة لضمان تسجيل الدخول بنجاح.
+    دالة تشخيصية متقدمة لتسجيل الدخول ومعرفة الرد الفعلي من سيرفرات المنصة.
     """
     session = requests.Session()
     session.headers.update({
@@ -14,7 +14,6 @@ def fetch_progress(username, password):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     })
 
-    # الروابط المحتملة لتسجيل الدخول في المنصة التعليمية
     login_urls = [
         "https://egy.app.spx-learning-square.com/login",
         "https://egy.app.spx-learning-square.com/api/login",
@@ -22,7 +21,6 @@ def fetch_progress(username, password):
         "https://me-portal.qureo.education/api/login"
     ]
 
-    # الأشكال المحتملة لأسماء حقول بيانات الدخول
     payload_variants = [
         {"student_id": username, "password": password},
         {"username": username, "password": password},
@@ -30,8 +28,8 @@ def fetch_progress(username, password):
         {"code": username, "password": password}
     ]
 
-    success = False
-    data = {}
+    last_status = None
+    last_text = ""
 
     for url in login_urls:
         for payload in payload_variants:
@@ -40,33 +38,25 @@ def fetch_progress(username, password):
                 session.headers.update({"Origin": base_origin, "Referer": url})
                 
                 response = session.post(url, json=payload, timeout=10, allow_redirects=True)
+                last_status = response.status_code
+                last_text = response.text[:150] # أول 150 حرف من رد السيرفر
                 
+                logger.info(f"URL: {url} | Status: {last_status} | Response: {last_text}")
+
                 if response.status_code == 200:
                     try:
                         res_json = response.json()
                         if res_json:
-                            data = res_json
-                            success = True
-                            break
+                            return {
+                                "chapter": res_json.get("current_chapter", res_json.get("chapter_name", res_json.get("chapter", "الفصل الأول"))),
+                                "diamonds": res_json.get("diamonds", res_json.get("gems", res_json.get("balance", 0)))
+                            }
                     except:
                         if session.cookies:
-                            success = True
-                            break
-                elif response.status_code in (400, 401, 403):
-                    continue
+                            return {"chapter": "الفصل الأول", "diamonds": 0}
             except Exception as e:
                 logger.debug(f"Attempt failed for {url}: {e}")
                 continue
-        if success:
-            break
 
-    if not success:
-        raise Exception("بيانات الدخول غير صحيحة أو أن المنصة تواجه ضغطاً حالياً. تأكد من كود الطالب وكلمة المرور.")
-
-    # استخراج التقدم ورصيد الدايموند بمرونة عالية
-    progress_data = {
-        "chapter": data.get("current_chapter", data.get("chapter_name", data.get("chapter", "الفصل الأول"))),
-        "diamonds": data.get("diamonds", data.get("gems", data.get("balance", 0)))
-    }
-
-    return progress_data
+    # إرجاع تفاصيل الخطأ الحقيقية لتعرفها فوراً
+    raise Exception(f"رفض الدخول (كود: {last_status}). الرد: {last_text}")
