@@ -255,7 +255,13 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
                         "--disable-setuid-sandbox",
                         "--disable-dev-shm-usage",
                         "--disable-gpu",
-                        "--window-size=1920,1080"
+                        "--disable-infobars",
+                        "--window-size=1920,1080",
+                        "--start-maximized",
+                        "--disable-web-security",
+                        "--allow-running-insecure-content",
+                        "--disable-extensions",
+                        "--disable-features=IsolateOrigins,site-per-process"
                     ]
                 )
             except Exception as launch_err:
@@ -516,5 +522,5 @@ def handle_callbacks(call):
                 bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, term_menu(g))
 
 if __name__ == "__main__":
-    logger.info("Bot started with Full Script & Screenshot Diagnostics...")
+    logger.info("Bot started with Anti-Bot Bypass Automation...")
     bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
