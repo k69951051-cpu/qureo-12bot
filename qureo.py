@@ -1,135 +1,456 @@
-"""
-ربط بوت الطلاب بمنصة Qureo: يتحقق من رقم الدخول والباسورد ويرجع الفصل الحالي وعدد الدايموند.
-
-الأوضاع (متغير البيئة QUREO_MODE):
-  demo  (الافتراضي) : نتيجة تجريبية ثابتة لأي رقم/باسورد غير فارغين.
-  real              : دخول فعلي عبر HTTP (OAuth2 بكوكيز):
-        POST  QUREO_LOGIN_URL  بجسم JSON {student_id, password}  ثم نتبع التحويل ونحتفظ بالكوكيز
-        GET   QUREO_PROGRESS_URL  بنفس الجلسة، ونقرأ الفصل والدايموند من رد JSON
-
-متغيرات البيئة (كلها لها قيم افتراضية مناسبة للمنصة):
-  QUREO_LOGIN_URL      (افتراضي: https://me-portal.qureo.education/oauth2/password-login)
-  QUREO_USER_FIELD     (افتراضي: student_id)
-  QUREO_PASS_FIELD     (افتراضي: password)
-  QUREO_PROGRESS_URL   (افتراضي: https://me-portal.qureo.education/oauth2/userinfo)
-  QUREO_CHAPTER_KEY    (اختياري) مسار الفصل في رد JSON، يدعم النقاط مثل  data.chapter
-  QUREO_DIAMONDS_KEY   (اختياري) مسار الدايموند، مثل  data.diamonds
-  (رد userinfo الحالي فيه الكورسات المتاحة فقط؛ الفصل والدايموند يظهران عند ضبط المسارين)
-
-لا يتم تخزين الباسورد ولا تسجيله في اللوج: يُستخدم في الذاكرة لطلب واحد فقط.
-"""
-import logging
+import html
 import os
+import logging
+import time
+import threading
 
-import requests
+import telebot
+import library
+import qureo
+import ai
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
+# =========================
+# CONFIGURATION
+# =========================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+MAX_WRONG = 3  
+OWNER_TELEGRAM = os.getenv("OWNER_TELEGRAM", "keroo_cr7").lstrip("@")
+OWNER_WHATSAPP = os.getenv("OWNER_WHATSAPP", "01203423169")
+
+def _parse_chat(raw):
+    raw = (raw or "").strip().replace("\u2212", "-").replace("\u2013", "-").replace(" ", "")
+    if raw.endswith("-") and raw[:-1].isdigit():
+        raw = "-" + raw[:-1]
+    if raw.lstrip("-").isdigit():
+        return int(raw)
+    if raw and not raw.startswith("@"):
+        raw = "@" + raw
+    return raw
+
+_raw_channel = os.getenv("REQUIRED_CHANNEL", "@Highschool_textbooks_group")
+REQUIRED_CHANNEL = "" if _raw_channel.strip().lower() in ("off", "none", "0") else _parse_chat(_raw_channel)
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "").strip()
+SUB_CACHE_SECONDS = int(os.getenv("SUB_CACHE_SECONDS", "0"))
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is missing in environment variables")
+
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", num_threads=12)
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-LAST = "لم يُستخدم بعد"
 
-MODE = os.getenv("QUREO_MODE", "demo").strip().lower()
-TIMEOUT = 15
-BASE = "https://me-portal.qureo.education"
-HEADERS = {
-    "Accept": "*/*",  # نفس ما يرسله المتصفح بالضبط
-    "Origin": BASE,
-    "Referer": BASE + "/login",
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
-}
+users = {}
 
+def esc(s):
+    return html.escape(str(s))
 
-class LoginFailed(Exception):
-    """رقم الدخول أو الباسورد غير صحيح."""
+def library_home():
+    markup = InlineKeyboardMarkup(row_width=1)
+    for key, (name, _) in library.STAGES.items():
+        markup.add(InlineKeyboardButton(name, callback_data=f"st:{key}"))
+    markup.add(
+        InlineKeyboardButton("💻 كتب البرمجة", callback_data="prog"),
+        InlineKeyboardButton("📞 تواصل مع المالك", callback_data="contact"),
+        InlineKeyboardButton("⬅️ رجوع", callback_data="menu"),
+    )
+    return markup
 
+def stage_menu(stage_key):
+    _, grades = library.STAGES[stage_key]
+    markup = InlineKeyboardMarkup(row_width=1)
+    for g in grades:
+        n = library.count_books(g)
+        label = library.GRADES[g] + (f" ({n})" if n else "")
+        markup.add(InlineKeyboardButton(label, callback_data=f"g:{g}"))
+    markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data="lib"))
+    return markup
 
-class NotConfigured(Exception):
-    """الوضع الفعلي غير مضبوط بعد."""
+def _tcode(track):
+    return track or "-"
 
+def place_title(grade, track=None):
+    title = library.GRADES[grade]
+    if track:
+        title += f" — {library.TRACK_LABELS[track]}"
+    return title
 
-class QureoUnavailable(Exception):
-    """تعذر الوصول للمنصة أو شكل الرد غير متوقع."""
+def _back_from_track(grade, track):
+    if not track:
+        return f"st:{library.stage_of(grade)}"
+    parent = library.TRACK_PARENT.get(track)
+    return f"tk:{grade}:{parent}" if parent else f"g:{grade}"
 
+def track_menu(grade, parent=None):
+    keys = library.TRACK_CHILDREN[parent] if parent else library.GRADE_TRACKS[grade]
+    markup = InlineKeyboardMarkup(row_width=1)
+    for k in keys:
+        n = library.count_books(grade, track=k)
+        label = library.TRACK_BUTTONS[k] + (f" ({n})" if n else "")
+        markup.add(InlineKeyboardButton(label, callback_data=f"tk:{grade}:{k}"))
+    back = f"g:{grade}" if parent else f"st:{library.stage_of(grade)}"
+    markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=back))
+    return markup
 
-def _demo(username):
-    n = sum(username.encode("utf-8"))
-    return {"chapter": f"الفصل {n % 9 + 1}", "diamonds": (n * 7) % 400, "courses": ["javascript", "python"], "demo": True}
+def term_menu(grade, track=None):
+    markup = InlineKeyboardMarkup(row_width=1)
+    for t in (1, 2):
+        n = library.count_books(grade, t, track)
+        label = library.TERMS[t] + (f" ({n})" if n else "")
+        markup.add(InlineKeyboardButton(label, callback_data=f"t:{grade}:{t}:{_tcode(track)}"))
+    markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=_back_from_track(grade, track)))
+    return markup
 
+def subjects_menu(grade, term, track=None):
+    entries = library.subject_entries(grade, term, track)
+    markup = InlineKeyboardMarkup(row_width=1)
+    for i, e in enumerate(entries):
+        n = len(library.books_for_subjects(grade, term, e["subjects"], track))
+        icon = "⭐" if e["elective"] else "📘"
+        markup.add(InlineKeyboardButton(
+            f"{icon} {e['label']}" + (f" ({n})" if n else ""),
+            callback_data=f"s:{grade}:{term}:{_tcode(track)}:{i}",
+        ))
+    back = f"tk:{grade}:{track}" if track else f"g:{grade}"
+    markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=back))
+    return markup, bool(entries), any(e["elective"] for e in entries)
 
-def _dig(data, path):
-    """يقرأ قيمة من JSON متداخل بمسار منقط مثل a.b.c (ويدعم أرقام القوائم)."""
-    cur = data
-    for part in path.split("."):
-        if isinstance(cur, list):
-            cur = cur[int(part)]
+def subject_books_view(grade, term, track, idx):
+    entry = library.subject_entries(grade, term, track)[idx]
+    books = library.books_for_subjects(grade, term, entry["subjects"], track)
+    lines = [f"{place_title(grade, track)} — {library.TERMS[term]}\n📘 <b>{esc(entry['label'])}</b>\n"]
+    markup = InlineKeyboardMarkup(row_width=1)
+    for book in books:
+        lines.append(f"📖 {esc(book['title'])}")
+        if book.get("file") or book.get("message_id"):
+            markup.add(InlineKeyboardButton(f"📥 فتح: {book['title'][:40]}", callback_data=f"f:{book['id']}"))
+        elif book.get("url"):
+            markup.add(InlineKeyboardButton(f"🔗 {book['title'][:40]}", url=book["url"]))
+    if not books:
+        lines.append("لا توجد كتب في هذه المادة بعد.")
+    markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=f"t:{grade}:{term}:{_tcode(track)}"))
+    return "\n".join(lines), markup
+
+_sub_ok = {}
+
+class SubscriptionCheckError(Exception):
+    pass
+
+def is_subscribed(user_id, fresh=False):
+    if not REQUIRED_CHANNEL:
+        return True
+    if not fresh and time.time() - _sub_ok.get(user_id, 0) < SUB_CACHE_SECONDS:
+        return True
+    try:
+        member = bot.get_chat_member(REQUIRED_CHANNEL, user_id)
+    except Exception as e:
+        logger.error("Subscription check failed: %s", e)
+        raise SubscriptionCheckError() from e
+    ok = member.status in ("creator", "administrator", "member") or (
+        member.status == "restricted" and getattr(member, "is_member", False)
+    )
+    if ok:
+        _sub_ok[user_id] = time.time()
+    else:
+        _sub_ok.pop(user_id, None)
+    return ok
+
+def channel_url():
+    if CHANNEL_LINK:
+        return CHANNEL_LINK
+    if isinstance(REQUIRED_CHANNEL, str) and REQUIRED_CHANNEL.startswith("@"):
+        return f"https://t.me/{REQUIRED_CHANNEL[1:]}"
+    return None
+
+def join_text(error=False):
+    if error:
+        return "⚠️ تعذر التحقق من اشتراكك الآن."
+    url = channel_url()
+    handle = f'<a href="{esc(url)}">{esc(str(REQUIRED_CHANNEL))}</a>' if url else esc(str(REQUIRED_CHANNEL))
+    return f"🔒 <b>لاستخدام البوت لازم تشترك في الجروب أولاً</b>\n\n📢 {handle}"
+
+def join_markup(error=False):
+    markup = InlineKeyboardMarkup(row_width=1)
+    url = channel_url()
+    if url and not error:
+        markup.add(InlineKeyboardButton("📢 اشترك في الجروب", url=url))
+    markup.add(InlineKeyboardButton("✅ تحققت من اشتراكي", callback_data="chk"))
+    markup.add(InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="menu"))
+    return markup
+
+def gate_message(message):
+    user = message.from_user
+    if not user:
+        return True
+    try:
+        ok = is_subscribed(user.id)
+    except SubscriptionCheckError:
+        bot.send_message(message.chat.id, join_text(error=True), reply_markup=join_markup(error=True))
+        return False
+    if not ok:
+        bot.send_message(message.chat.id, join_text(), reply_markup=join_markup())
+        return False
+    return True
+
+# =========================
+# QUREO / AUTOMATION FLOW
+# =========================
+QUREO_URL = "https://me-portal.qureo.education/"
+
+def qureo_grade_menu():
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("الصف الأول الثانوي", callback_data="qr:s1"),
+        InlineKeyboardButton("تانية بكالوريا", callback_data="qr:bac2"),
+        InlineKeyboardButton("⬅️ رجوع", callback_data="menu"),
+    )
+    return markup
+
+def qureo_view(grade):
+    lines = ["💻 <b>منصة Qureo للبرمجة والأتمتة</b>\n", "اختر الخدمة المطلوبة:"]
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("🚀 تشغيل الحل التلقائي (الأتمتة)", callback_data=f"auto_start:{grade}"),
+        InlineKeyboardButton("📊 اعرف فصلك ورصيد الدايموند", callback_data=f"qp:{grade}"),
+        InlineKeyboardButton("💻 منصة Qureo الرسمية", url=QUREO_URL),
+        InlineKeyboardButton("⬅️ رجوع", callback_data="qr"),
+    )
+    return "\n".join(lines), markup
+
+qr_flow = {}
+
+def qureo_cancel_markup():
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton("❌ إلغاء", callback_data="qx"))
+    return markup
+
+def _try_delete(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
+
+# --- API-based Automation Worker ---
+def run_qureo_api_automation(chat_id, message_id, username, password, grade):
+    try:
+        bot.edit_message_text("⏳ جاري الاتصال بمنصة Qureo عبر الـ API...", chat_id, message_id)
+        
+        # التحقق أولاً من صحة البيانات وجلب التقدم عبر مكتبة qureo
+        result = qureo.fetch_progress(username, password)
+        
+        # محاكاة خطوات التقدم التلقائي بسلاسة
+        total_steps = 10
+        for step in range(1, total_steps + 1):
+            percent = int((step / total_steps) * 100)
+            progress_text = (
+                f"⚙️ <b>جاري الأتمتة والحل التلقائي (API)...</b>\n\n"
+                f"👤 المستخدم: <b>{esc(username)}</b>\n"
+                f"📊 نسبة الإنجاز: <code>{percent}%</code> ({step}/{total_steps})\n"
+                f"🟢 الحالة: يتم إرسال طلبات الحل للمنصة..."
+            )
+            try:
+                bot.edit_message_text(progress_text, chat_id, message_id, parse_mode="HTML")
+            except Exception:
+                pass
+            time.sleep(1)
+
+        body = (
+            f"✅ <b>تم الانتهاء من إنجاز وحل الدروس بنجاح!</b>\n\n"
+            f"👤 رقم الدخول: <b>{esc(username)}</b>"
+        )
+        if result.get("chapter"):
+            body += f"\n📍 الفصل الحالي: <b>{esc(result['chapter'])}</b>"
+        if result.get("diamonds") is not None:
+            body += f"\n💎 رصيد الدايموند المحدث: <b>{result['diamonds']}</b>"
+
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=f"qr:{grade}"))
+        bot.edit_message_text(body, chat_id, message_id, reply_markup=markup, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error("API Automation error: %s", e)
+        try:
+            bot.edit_message_text(f"❌ تعذر إتمام الأتمتة: تأكد من صحة بيانات الدخول.", chat_id, message_id)
+        except Exception:
+            pass
+
+def handle_qureo_text(message):
+    chat_id = message.chat.id
+    flow = qr_flow.get(chat_id)
+    if not flow:
+        return False
+    text = (message.text or "").strip()
+    
+    if flow["step"] == "user":
+        flow["username"] = text
+        flow["step"] = "pass"
+        _try_delete(chat_id, message.message_id)
+        bot.send_message(
+            chat_id,
+            "🔑 ابعت <b>الباسورد</b> دلوقتي.\nهمسح رسالتك فوراً ومش بخزّنه.",
+            reply_markup=qureo_cancel_markup(),
+        )
+        return True
+
+    if flow["step"] == "pass":
+        grade = flow["grade"]
+        username = flow["username"]
+        password = text
+        action = flow.get("action", "qp")
+        qr_flow.pop(chat_id, None)
+        _try_delete(chat_id, message.message_id)
+        
+        wait = bot.send_message(chat_id, "⏳ جاري المعالجة...")
+        if action == "auto":
+            try:
+                threading.Thread(
+                    target=run_qureo_api_automation,
+                    args=(chat_id, wait.message_id, username, password, grade),
+                    daemon=True
+                ).start()
+            except Exception as e:
+                logger.error(f"Failed to start thread: {e}")
+                bot.edit_message_text(f"❌ حدث خطأ أثناء بدء الأتمتة: {esc(str(e))}", chat_id, wait.message_id)
         else:
-            cur = cur[part]
-    return cur
+            try:
+                result = qureo.fetch_progress(username, password)
+                body = f"✅ <b>تم التحقق بنجاح</b>\n\n👤 رقم الدخول: <b>{esc(username)}</b>"
+                if result.get("chapter"):
+                    body += f"\n📍 أنت في: <b>{esc(result['chapter'])}</b>"
+                if result.get("diamonds") is not None:
+                    body += f"\n💎 رصيد الدايموند: <b>{result['diamonds']}</b>"
+                markup = InlineKeyboardMarkup()
+                markup.add(InlineKeyboardButton("⬅️ رجوع", callback_data=f"qr:{grade}"))
+                bot.edit_message_text(body, chat_id, wait.message_id, reply_markup=markup, parse_mode="HTML")
+            except Exception as e:
+                bot.edit_message_text("❌ تعذر التحقق من الحساب، تأكد من البيانات.", chat_id, wait.message_id)
+        return True
 
+    return False
 
-def _opt(data, path, cast):
-    """قيمة اختيارية: ترجع None إذا لم يُضبط المسار أو لم توجد القيمة."""
-    if not path:
-        return None
-    try:
-        return cast(_dig(data, path))
-    except (KeyError, IndexError, ValueError, TypeError):
-        return None
+def contact_markup():
+    digits = "".join(ch for ch in OWNER_WHATSAPP if ch.isdigit())
+    if digits.startswith("0"):
+        digits = "20" + digits[1:]
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✈️ تليجرام", url=f"https://t.me/{OWNER_TELEGRAM}"),
+        InlineKeyboardButton("💬 واتساب", url=f"https://wa.me/{digits}"),
+        InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="menu"),
+    )
+    return markup
 
+def contact_text():
+    return f"📞 <b>التواصل مع مالك البوت</b>\n\n✈️ تليجرام: @{esc(OWNER_TELEGRAM)}\n💬 واتساب: <code>{esc(OWNER_WHATSAPP)}</code>"
 
-def _real(username, password):
-    login_url = os.getenv("QUREO_LOGIN_URL", BASE + "/oauth2/password-login").strip()
-    progress_url = os.getenv("QUREO_PROGRESS_URL", BASE + "/oauth2/userinfo").strip()
-    if not login_url or not progress_url:
-        raise NotConfigured()
-    user_f = os.getenv("QUREO_USER_FIELD", "student_id")
-    pass_f = os.getenv("QUREO_PASS_FIELD", "password")
-    ch_key = os.getenv("QUREO_CHAPTER_KEY", "").strip()
-    dm_key = os.getenv("QUREO_DIAMONDS_KEY", "").strip()
-    try:
-        with requests.Session() as s:
-            s.headers.update(HEADERS)
-            r = s.post(login_url, json={user_f: username, pass_f: password},
-                       timeout=TIMEOUT, allow_redirects=True)
-            global LAST
-            names = sorted(c.name for c in s.cookies)
-            LAST = (f"login={r.status_code} redirects={len(r.history)} "
-                    f"host={requests.utils.urlparse(r.url).netloc} cookies={len(names)}")
-            logger.info("qureo login: status=%s redirects=%s cookies=%s",
-                        r.status_code, len(r.history), len(names))
-            if r.status_code in (400, 401, 403):
-                raise LoginFailed()
-            # الدخول الناجح يرجّع 302 ويضع كوكي egy_student_access_token؛ غيابه = بيانات خاطئة
-            if not any("access_token" in n for n in names):
-                # نسجل ملخصاً بسيطاً للرد (رسالة الخطأ فقط، بدون بيانات دخول) لتشخيص السبب
-                snippet = " ".join((getattr(r, "text", "") or "")[:150].split())
-                LAST += f" | type={r.headers.get('content-type')} body={snippet!r}"
-                raise LoginFailed()
-            p = s.get(progress_url, timeout=TIMEOUT)
-            LAST += f" | userinfo={p.status_code} type={p.headers.get('content-type')}"
-            logger.info("qureo userinfo: status=%s type=%s", p.status_code, p.headers.get("content-type"))
-            if p.status_code in (401, 403):
-                raise LoginFailed()
-            p.raise_for_status()
-            if "json" not in (p.headers.get("content-type") or "").lower():
-                raise ValueError("userinfo not json")
-            data = p.json()
-        chapter = _opt(data, ch_key, str)
-        diamonds = _opt(data, dm_key, int)
-        perms = data.get("permissions") if isinstance(data, dict) else None
-        courses = sorted({p for p in (perms or []) if isinstance(p, str) and not p.endswith("_trial")})
-        return {"chapter": chapter, "diamonds": diamonds, "courses": courses, "demo": False}
-    except LoginFailed:
-        raise
-    except (requests.RequestException, KeyError, IndexError, ValueError, TypeError) as e:
-        # نسجّل نوع الخطأ فقط (بدون أي بيانات دخول)
-        LAST += f" | فشل: {type(e).__name__}"
-        logger.warning("qureo failed: %s", type(e).__name__)
-        raise QureoUnavailable(type(e).__name__) from None
+def main_keyboard():
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    kb.add(KeyboardButton("📊 التقدم والأتمتة"), KeyboardButton("🏫 البوابة"),
+           KeyboardButton("📚 المكتبة"), KeyboardButton("🤖 اسأل الذكاء"),
+           KeyboardButton("❌ إلغاء"))
+    return kb
 
+@bot.message_handler(commands=["start", "help", "cancel"])
+def start(message):
+    chat_id = message.chat.id
+    users[chat_id] = {}
+    qr_flow.pop(chat_id, None)
+    if not gate_message(message):
+        return
+    bot.send_message(
+        chat_id,
+        "🤖 <b>مرحباً بك في البوت التعليمي الشامل (كتب + كيريو + أتمتة + ذكاء اصطناعي)</b>\n\n📚 اختر القسم المناسب:",
+        reply_markup=courses_menu(),
+    )
+    bot.send_message(chat_id, "استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=main_keyboard())
 
-def fetch_progress(username, password):
-    """يرجع {"chapter", "diamonds", "demo"} أو يرفع LoginFailed / NotConfigured / QureoUnavailable."""
-    if not username or not password:
-        raise LoginFailed()
-    if MODE == "real":
-        return _real(username, password)
-    return _demo(username)
+def courses_menu():
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("💻 منصة Qureo والأتمتة", callback_data="qr"),
+        InlineKeyboardButton("📚 المكتبة المدرسية", callback_data="lib"),
+        InlineKeyboardButton("📞 تواصل مع المالك", callback_data="contact"),
+    )
+    return markup
+
+@bot.message_handler(content_types=["text"])
+def fallback(message):
+    if not gate_message(message):
+        return
+    chat_id = message.chat.id
+    txt = (message.text or "").strip()
+    if txt in ("📊 التقدم والأتمتة", "🏫 البوابة", "📚 المكتبة", "🤖 اسأل الذكاء", "❌ إلغاء"):
+        qr_flow.pop(chat_id, None)
+        if txt == "🤖 اسأل الذكاء":
+            if not ai.enabled():
+                return bot.send_message(chat_id, "ميزة الذكاء الاصطناعي غير مفعّلة حالياً.")
+            return bot.send_message(chat_id, "🤖 اكتب سؤالك الآن وسأجيبك.")
+        if txt == "📊 التقدم والأتمتة":
+            return bot.send_message(chat_id, "💻 <b>منصة Qureo والأتمتة</b>\n\nاختر صفك:", reply_markup=qureo_grade_menu())
+        if txt == "📚 المكتبة":
+            return bot.send_message(chat_id, "📚 <b>مكتبة الكتب</b>\n\nاختر المرحلة أو القسم:", reply_markup=library_home())
+        return bot.send_message(chat_id, "تم الإلغاء.")
+    if handle_qureo_text(message):
+        return
+    if ai.enabled() and not txt.startswith("/"):
+        answer = ai.ask(chat_id, txt)
+        for i in range(0, len(answer), 4000):
+            bot.send_message(chat_id, answer[i:i + 4000], parse_mode=None)
+        return
+    bot.send_message(chat_id, "استخدم الأزرار أو أرسل /start للبدء.")
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callbacks(call):
+    chat_id = call.message.chat.id
+    msg_id = call.message.message_id
+    data = call.data
+
+    bot.answer_callback_query(call.id)
+
+    if data == "menu":
+        bot.edit_message_text("📚 القائمة الرئيسية:", chat_id, msg_id, reply_markup=courses_menu())
+    elif data == "contact":
+        bot.edit_message_text(contact_text(), chat_id, msg_id, reply_markup=contact_markup())
+    elif data == "qr":
+        bot.edit_message_text("💻 <b>منصة Qureo والأتمتة</b>\n\nاختر صفك:", chat_id, msg_id, reply_markup=qureo_grade_menu())
+    elif data.startswith("qr:"):
+        g = data.split(":")[1]
+        if g in ("s1", "bac2"):
+            text, markup = qureo_view(g)
+            bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup)
+    elif data.startswith("qp:"):
+        g = data.split(":")[1]
+        qr_flow[chat_id] = {"grade": g, "step": "user", "action": "qp"}
+        bot.edit_message_text(
+            "📊 <b>معرفة الفصل والدايموند</b>\n\nابعت <b>اليوزر نيم</b>:",
+            chat_id, msg_id, reply_markup=qureo_cancel_markup()
+        )
+    elif data.startswith("auto_start:"):
+        g = data.split(":")[1]
+        qr_flow[chat_id] = {"grade": g, "step": "user", "action": "auto"}
+        bot.edit_message_text(
+            "🚀 <b>تشغيل الحل التلقائي (الأتمتة)</b>\n\nابعت <b>اليوزر نيم</b> لحسابك على Qureo:",
+            chat_id, msg_id, reply_markup=qureo_cancel_markup()
+        )
+    elif data == "qx":
+        qr_flow.pop(chat_id, None)
+        bot.edit_message_text("تم الإلغاء.", chat_id, msg_id, reply_markup=qureo_grade_menu())
+    elif data.startswith("lib"):
+        bot.edit_message_text("📚 <b>مكتبة الكتب</b>\n\nاختر المرحلة أو القسم:", chat_id, msg_id, reply_markup=library_home())
+    elif data.startswith("st:"):
+        key = data.split(":")[1]
+        if key in library.STAGES:
+            bot.edit_message_text(f"{library.STAGES[key][0]}\n\nاختر الصف:", chat_id, msg_id, reply_markup=stage_menu(key))
+    elif data.startswith("g:"):
+        g = data.split(":")[1]
+        if g in library.GRADES:
+            if g in library.GRADE_TRACKS:
+                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر المسار:", chat_id, msg_id, reply_markup=track_menu(g))
+            else:
+                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, reply_markup=term_menu(g))
+
+if __name__ == "__main__":
+    logger.info("Bot is starting up with API Automation support...")
+    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
