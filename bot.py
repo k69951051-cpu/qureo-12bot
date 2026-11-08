@@ -278,60 +278,39 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
         try:
             browser = await p.chromium.launch(headless=True)
         except Exception as launch_err:
-            bot.edit_message_text(
-                f"❌ تعذر تشغيل محرك الأتمتة: {esc(str(launch_err))}",
-                chat_id, message_id
-            )
+            bot.edit_message_text(f"❌ تعذر تشغيل محرك الأتمتة: {esc(str(launch_err))}", chat_id, message_id)
             return
 
         page = await browser.new_page()
         try:
             bot.edit_message_text("⏳ جاري الاتصال بمنصة Qureo وتسجيل الدخول...", chat_id, message_id)
-            await page.goto("https://me-portal.qureo.education/oauth2/password-login", timeout=30000)
-            await page.wait_for_load_state("domcontentloaded")
+            
+            # الانتقال لصفحة تسجيل الدخول الفعلي للواجهة
+            await page.goto("https://me-portal.qureo.education/login", timeout=40000)
+            
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except:
+                await page.wait_for_load_state("domcontentloaded")
 
-            # البحث المرن عن حقل اليوزر
-            user_selectors = ['input[name="student_id"]', '#student_id', 'input[type="text"]', 'input[name="username"]', 'input']
-            user_input = None
-            for sel in user_selectors:
-                try:
-                    await page.wait_for_selector(sel, timeout=3000)
-                    user_input = sel
-                    break
-                except:
-                    continue
+            # الانتظار حتى تظهر حقول الإدخال في الصفحة
+            await page.wait_for_selector("input", state="visible", timeout=15000)
 
-            if not user_input:
-                raise Exception("لم يتم العثور على حقل اسم المستخدم في صفحة تسجيل الدخول.")
+            # إيجاد وتعبئة حقل اسم المستخدم / رقم الدخول
+            user_locator = page.locator('input[name="student_id"], input[name="username"], input[type="text"], input[type="email"], input').first
+            await user_locator.wait_for(state="visible", timeout=10000)
+            await user_locator.fill(username)
 
-            await page.fill(user_input, username)
-
-            # البحث المرن عن حقل الباسورد
-            pass_selectors = ['input[name="password"]', '#password', 'input[type="password"]']
-            pass_input = None
-            for sel in pass_selectors:
-                try:
-                    await page.wait_for_selector(sel, timeout=3000)
-                    pass_input = sel
-                    break
-                except:
-                    continue
-
-            if not pass_input:
-                raise Exception("لم يتم العثور على حقل كلمة المرور في صفحة تسجيل الدخول.")
-
-            await page.fill(pass_input, password)
+            # إيجاد وتعبئة حقل كلمة المرور
+            pass_locator = page.locator('input[name="password"], input[type="password"]').first
+            await pass_locator.wait_for(state="visible", timeout=10000)
+            await pass_locator.fill(password)
 
             # الضغط على زر تسجيل الدخول
-            submit_selectors = ['button[type="submit"]', 'button:has-text("تسجيل الدخول")', 'button', 'input[type="submit"]']
-            for sel in submit_selectors:
-                try:
-                    await page.click(sel, timeout=3000)
-                    break
-                except:
-                    continue
+            submit_locator = page.locator('button[type="submit"], button:has-text("تسجيل الدخول"), input[type="submit"], button').first
+            await submit_locator.click()
 
-            await asyncio.sleep(4)
+            await asyncio.sleep(5)
 
             # محاكاة خطوات الحل الفعلي مع تحديث النسبة المئوية لحظياً (Live Progress)
             total_steps = 20
