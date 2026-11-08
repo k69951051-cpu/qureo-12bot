@@ -239,7 +239,7 @@ def _try_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- Stealth Playwright Worker (Fixed Locale) ---
+# --- Stealth Playwright Worker with Portal Session & Progress Bar ---
 async def run_qureo_automation(chat_id, message_id, username, password, grade):
     try:
         bot.edit_message_text("⏳ جاري تهيئة متصفح الأتمتة...", chat_id, message_id)
@@ -249,7 +249,6 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
     try:
         async with async_playwright() as p:
             try:
-                bot.edit_message_text("⏳ جاري إقلاع المتصفح الخفي...", chat_id, message_id)
                 browser = await p.chromium.launch(
                     headless=True,
                     args=[
@@ -272,7 +271,7 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                 viewport={"width": 1920, "height": 1080},
-                locale="en-US"  # <-- تم تصحيح الـ Locale هنا بنجاح
+                locale="en-US"
             )
 
             await context.add_init_script("""
@@ -281,11 +280,23 @@ async def run_qureo_automation(chat_id, message_id, username, password, grade):
 
             page = await context.new_page()
 
-            bot.edit_message_text("⏳ جاري فتح صفحة تسجيل الدخول...", chat_id, message_id)
+            # الخطوة الأساسية: زيارة البوابة الرئيسية أولاً لتوليد ملفات الجلسة (Cookies) كما في الفيديو
+            bot.edit_message_text("⏳ الخطوة 1: الاتصال ببوابة سبريكس الأساسية...", chat_id, message_id)
+            await page.goto("https://sprixportal.jp/", timeout=45000, wait_until="domcontentloaded")
+            await asyncio.sleep(2)
+
+            try:
+                await page.click("text=الصف الأول الثانوي", timeout=5000)
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+
+            # الانتقال لصفحة تسجيل الدخول بعد إنشاء الجلسة بنجاح
+            bot.edit_message_text("⏳ الخطوة 2: الانتقال لصفحة تسجيل الدخول...", chat_id, message_id)
             await page.goto("https://egy.app.spx-learning-square.com/login", timeout=45000, wait_until="domcontentloaded")
             await asyncio.sleep(2)
 
-            bot.edit_message_text("⏳ جاري كتابة بيانات الحساب...", chat_id, message_id)
+            bot.edit_message_text("⏳ الخطوة 3: إدخال كود الطالب وكلمة المرور...", chat_id, message_id)
 
             user_locator = page.locator('input[type="text"], input[name="username"], input[name="student_id"], input').first
             await user_locator.wait_for(state="visible", timeout=20000)
@@ -491,19 +502,4 @@ def handle_callbacks(call):
         qr_flow.pop(chat_id, None)
         bot.edit_message_text("تم الإلغاء.", chat_id, msg_id, reply_markup=qureo_grade_menu())
     elif data.startswith("lib"):
-        bot.edit_message_text("📚 <b>مكتبة الكتب</b>\n\nاختر المرحلة أو القسم:", chat_id, msg_id, reply_markup=library_home())
-    elif data.startswith("st:"):
-        key = data.split(":")[1]
-        if key in library.STAGES:
-            bot.edit_message_text(f"{library.STAGES[key][0]}\n\nاختر الصف:", chat_id, msg_id, reply_markup=stage_menu(key))
-    elif data.startswith("g:"):
-        g = data.split(":")[1]
-        if g in library.GRADES:
-            if g in library.GRADE_TRACKS:
-                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر المسار:", chat_id, msg_id, reply_markup=track_menu(g))
-            else:
-                bot.edit_message_text(f"{library.GRADES[g]}\n\nاختر الترم:", chat_id, msg_id, reply_markup=term_menu(g))
-
-if __name__ == "__main__":
-    logger.info("Bot started with Fixed Locale & Progress Bar Automation...")
-    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
+        
